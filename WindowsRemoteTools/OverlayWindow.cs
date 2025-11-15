@@ -36,7 +36,7 @@ namespace WindowsRemoteTools
                 Opacity = opacity,
                 ShowInTaskbar = false,
                 StartPosition = FormStartPosition.Manual,
-                Bounds = Screen.PrimaryScreen.Bounds
+                Bounds = Screen.PrimaryScreen?.Bounds ?? Screen.AllScreens[0].Bounds
             };
 
             // Main panel
