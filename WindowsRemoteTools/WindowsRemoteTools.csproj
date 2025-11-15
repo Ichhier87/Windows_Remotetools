@@ -5,7 +5,6 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
-    <ApplicationIcon>icon.ico</ApplicationIcon>
     <AssemblyName>WindowsRemoteTools</AssemblyName>
     <RootNamespace>WindowsRemoteTools</RootNamespace>
   </PropertyGroup>
