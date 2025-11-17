@@ -19,6 +19,8 @@ namespace WindowsRemoteTools
         private readonly ConfigManager _config;
         private readonly VolumeController _volumeController;
         private readonly DisplayController _displayController;
+        private readonly PictureController _pictureController;
+        private readonly AudioController _audioController;
         private readonly OverlayWindow? _overlayWindow;
         private readonly ServicePipeServer? _pipeServer;
         private ClientWebSocket? _webSocket;
@@ -29,11 +31,13 @@ namespace WindowsRemoteTools
 
         public bool IsConnected { get; private set; }
 
-        public WebSocketClient(ConfigManager config, VolumeController volumeController, DisplayController displayController, OverlayWindow? overlayWindow = null, ServicePipeServer? pipeServer = null)
+        public WebSocketClient(ConfigManager config, VolumeController volumeController, DisplayController displayController, PictureController pictureController, AudioController audioController, OverlayWindow? overlayWindow = null, ServicePipeServer? pipeServer = null)
         {
             _config = config;
             _volumeController = volumeController;
             _displayController = displayController;
+            _pictureController = pictureController;
+            _audioController = audioController;
             _overlayWindow = overlayWindow;
             _pipeServer = pipeServer;
         }
@@ -269,11 +273,20 @@ namespace WindowsRemoteTools
                     await HandleDisplayOperation(data);
                     break;
 
-                case "AUDIO_PLAYBACK":
+                case "UPLOAD_BASE64":
+                    await HandleUploadBase64Operation(data);
+                    break;
+
                 case "FILES":
+                    await HandleFilesOperation(data);
+                    break;
+
+                case "AUDIO_PLAYBACK":
+                    await HandleAudioPlaybackOperation(data);
+                    break;
+
                 case "APPS":
                 case "GPS":
-                case "UPLOAD_BASE64":
                     // Not implemented for Windows - send default response
                     await SendNotSupportedResponse(data["UUID"]?.ToString(), messageType);
                     break;
@@ -412,8 +425,287 @@ namespace WindowsRemoteTools
                     });
                     break;
 
+                case "thumbnail":
+                    {
+                        var filename = data["name"]?.ToString();
+                        if (!string.IsNullOrEmpty(filename))
+                        {
+                            var thumbnail = _pictureController.GenerateThumbnail(filename);
+                            await SendMessage(new JObject
+                            {
+                                ["UUID"] = uuid,
+                                ["filename"] = filename,
+                                ["thumbnail"] = thumbnail != null ? Convert.ToBase64String(thumbnail) : null,
+                                ["success"] = thumbnail != null
+                            });
+                        }
+                        break;
+                    }
+
+                case "listall":
+                    {
+                        var pictures = _pictureController.ListAll();
+                        var pictureArray = new JArray();
+                        foreach (var pic in pictures)
+                        {
+                            pictureArray.Add(new JObject
+                            {
+                                ["name"] = pic.Name,
+                                ["size"] = pic.Size,
+                                ["width"] = pic.Width,
+                                ["height"] = pic.Height,
+                                ["lastModified"] = pic.LastModified.ToString("o")
+                            });
+                        }
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["pictures"] = pictureArray
+                        });
+                        break;
+                    }
+
+                case "showonsmartphone":
+                    {
+                        var filename = data["name"]?.ToString();
+                        if (!string.IsNullOrEmpty(filename))
+                        {
+                            var picturePath = _pictureController.GetPicturePath(filename);
+                            if (_pictureController.PictureExists(filename))
+                            {
+                                await SendOverlayCommand(PipeMessage.MessageTypes.ShowPicture, picturePath);
+                                await SendMessage(new JObject
+                                {
+                                    ["UUID"] = uuid,
+                                    ["status"] = "ok",
+                                    ["filename"] = filename
+                                });
+                            }
+                            else
+                            {
+                                await SendMessage(new JObject
+                                {
+                                    ["UUID"] = uuid,
+                                    ["status"] = "error",
+                                    ["message"] = "Picture not found"
+                                });
+                            }
+                        }
+                        break;
+                    }
+
                 default:
                     await SendNotSupportedResponse(uuid, $"DISPLAY.{operation}");
+                    break;
+            }
+        }
+
+        private async Task HandleAudioPlaybackOperation(JObject data)
+        {
+            var operation = data["OP"]?.ToString();
+            var uuid = data["UUID"]?.ToString();
+
+            Console.WriteLine($"Received AUDIO_PLAYBACK operation: {operation}");
+
+            switch (operation?.ToLower())
+            {
+                case "playsound":
+                    {
+                        var filename = data["name"]?.ToString();
+                        var loop = data["loop"]?.ToObject<bool>() ?? false;
+
+                        if (!string.IsNullOrEmpty(filename))
+                        {
+                            var success = _audioController.Play(filename, loop);
+                            await SendMessage(new JObject
+                            {
+                                ["UUID"] = uuid,
+                                ["status"] = success ? "ok" : "error",
+                                ["filename"] = filename,
+                                ["loop"] = loop
+                            });
+                        }
+                        break;
+                    }
+
+                case "stopsound":
+                case "stopall":
+                    _audioController.Stop();
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["status"] = "ok"
+                    });
+                    break;
+
+                case "listall":
+                    {
+                        var sounds = _audioController.ListAll();
+                        var soundArray = new JArray();
+                        foreach (var sound in sounds)
+                        {
+                            soundArray.Add(new JObject
+                            {
+                                ["name"] = sound.Name,
+                                ["size"] = sound.Size,
+                                ["duration"] = sound.Duration.TotalSeconds,
+                                ["lastModified"] = sound.LastModified.ToString("o")
+                            });
+                        }
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["sounds"] = soundArray
+                        });
+                        break;
+                    }
+
+                case "currentlyplaying":
+                    {
+                        var playbackInfo = _audioController.GetPlaybackInfo();
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["isPlaying"] = playbackInfo.IsPlaying,
+                            ["isLooping"] = playbackInfo.IsLooping,
+                            ["currentFile"] = playbackInfo.CurrentFile,
+                            ["position"] = playbackInfo.Position.TotalSeconds,
+                            ["duration"] = playbackInfo.Duration.TotalSeconds
+                        });
+                        break;
+                    }
+
+                default:
+                    await SendNotSupportedResponse(uuid, $"AUDIO_PLAYBACK.{operation}");
+                    break;
+            }
+        }
+
+        private async Task HandleUploadBase64Operation(JObject data)
+        {
+            var filename = data["filename"]?.ToString();
+            var base64Data = data["data"]?.ToString();
+            var type = data["type"]?.ToString()?.ToLower() ?? "picture";
+            var uuid = data["UUID"]?.ToString();
+
+            Console.WriteLine($"Received UPLOAD_BASE64: {filename} (type: {type})");
+
+            if (string.IsNullOrEmpty(filename) || string.IsNullOrEmpty(base64Data))
+            {
+                await SendMessage(new JObject
+                {
+                    ["UUID"] = uuid,
+                    ["status"] = "error",
+                    ["message"] = "Missing filename or data"
+                });
+                return;
+            }
+
+            bool success = false;
+            if (type == "picture")
+            {
+                success = _pictureController.SavePictureBase64(filename, base64Data);
+            }
+            else if (type == "sound")
+            {
+                success = _audioController.SaveAudioBase64(filename, base64Data);
+            }
+
+            await SendMessage(new JObject
+            {
+                ["UUID"] = uuid,
+                ["status"] = success ? "ok" : "error",
+                ["filename"] = filename,
+                ["type"] = type,
+                ["message"] = success ? "File uploaded successfully" : "Upload failed"
+            });
+        }
+
+        private async Task HandleFilesOperation(JObject data)
+        {
+            var operation = data["OP"]?.ToString();
+            var uuid = data["UUID"]?.ToString();
+            var type = data["type"]?.ToString()?.ToLower();
+
+            Console.WriteLine($"Received FILES operation: {operation} (type: {type})");
+
+            switch (operation?.ToLower())
+            {
+                case "deletepure":
+                case "remove":
+                    {
+                        var filename = data["name"]?.ToString();
+                        if (!string.IsNullOrEmpty(filename))
+                        {
+                            bool success = false;
+                            if (type == "sound")
+                            {
+                                success = _audioController.DeleteAudio(filename);
+                            }
+                            else
+                            {
+                                // Default to picture
+                                success = _pictureController.DeletePicture(filename);
+                            }
+
+                            await SendMessage(new JObject
+                            {
+                                ["UUID"] = uuid,
+                                ["status"] = success ? "ok" : "error",
+                                ["filename"] = filename,
+                                ["type"] = type
+                            });
+                        }
+                        break;
+                    }
+
+                case "listall":
+                    {
+                        var fileArray = new JArray();
+
+                        if (type == "sound")
+                        {
+                            var sounds = _audioController.ListAll();
+                            foreach (var sound in sounds)
+                            {
+                                fileArray.Add(new JObject
+                                {
+                                    ["name"] = sound.Name,
+                                    ["size"] = sound.Size,
+                                    ["path"] = sound.Path,
+                                    ["type"] = "sound",
+                                    ["duration"] = sound.Duration.TotalSeconds
+                                });
+                            }
+                        }
+                        else
+                        {
+                            var pictures = _pictureController.ListAll();
+                            foreach (var pic in pictures)
+                            {
+                                fileArray.Add(new JObject
+                                {
+                                    ["name"] = pic.Name,
+                                    ["size"] = pic.Size,
+                                    ["path"] = pic.Path,
+                                    ["type"] = "picture",
+                                    ["width"] = pic.Width,
+                                    ["height"] = pic.Height
+                                });
+                            }
+                        }
+
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["files"] = fileArray,
+                            ["type"] = type
+                        });
+                        break;
+                    }
+
+                default:
+                    await SendNotSupportedResponse(uuid, $"FILES.{operation}");
                     break;
             }
         }
@@ -484,6 +776,13 @@ namespace WindowsRemoteTools
                 case PipeMessage.MessageTypes.ShowBlockingScreen:
                     _overlayWindow?.ShowBlockingScreen(data?.ToString() ?? "Screen Locked");
                     break;
+
+                case PipeMessage.MessageTypes.ShowPicture:
+                    if (data is string picturePath)
+                    {
+                        _overlayWindow?.ShowPicture(picturePath);
+                    }
+                    break;
             }
         }
 
@@ -533,7 +832,7 @@ namespace WindowsRemoteTools
                     },
 
                     // Audio playback status
-                    ["playback"] = false,  // Not implemented for Windows
+                    ["playback"] = _audioController.IsPlaying,
 
                     // Do Not Disturb
                     ["DoNotDisturb"] = _config.EnforceMaxVolume,  // Map to volume enforcement

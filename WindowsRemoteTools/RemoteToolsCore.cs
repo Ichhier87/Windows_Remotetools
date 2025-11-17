@@ -10,6 +10,8 @@ namespace WindowsRemoteTools
         private readonly ConfigManager _config;
         private readonly VolumeController _volumeController;
         private readonly DisplayController _displayController;
+        private readonly PictureController _pictureController;
+        private readonly AudioController _audioController;
         private readonly OverlayWindow? _overlayWindow;
         private readonly ServicePipeServer? _pipeServer;
         private readonly WebSocketClient _webSocketClient;
@@ -26,18 +28,20 @@ namespace WindowsRemoteTools
             _config = ConfigManager.Load();
             _volumeController = new VolumeController(_config);
             _displayController = new DisplayController();
+            _pictureController = new PictureController(_config);
+            _audioController = new AudioController(_config);
 
             if (_useOverlayDirectly)
             {
                 // GUI mode: use overlay directly
                 _overlayWindow = new OverlayWindow();
-                _webSocketClient = new WebSocketClient(_config, _volumeController, _displayController, _overlayWindow);
+                _webSocketClient = new WebSocketClient(_config, _volumeController, _displayController, _pictureController, _audioController, _overlayWindow);
             }
             else
             {
                 // Service mode: use pipe server to communicate with UI process
                 _pipeServer = new ServicePipeServer();
-                _webSocketClient = new WebSocketClient(_config, _volumeController, _displayController, null, _pipeServer);
+                _webSocketClient = new WebSocketClient(_config, _volumeController, _displayController, _pictureController, _audioController, null, _pipeServer);
             }
         }
 
@@ -97,6 +101,16 @@ namespace WindowsRemoteTools
         public DisplayController DisplayController => _displayController;
 
         /// <summary>
+        /// Gets the picture controller
+        /// </summary>
+        public PictureController PictureController => _pictureController;
+
+        /// <summary>
+        /// Gets the audio controller
+        /// </summary>
+        public AudioController AudioController => _audioController;
+
+        /// <summary>
         /// Gets the overlay window (only available in GUI mode)
         /// </summary>
         public OverlayWindow? OverlayWindow => _overlayWindow;
@@ -127,6 +141,8 @@ namespace WindowsRemoteTools
                     _webSocketClient?.Dispose();
                     _volumeController?.Dispose();
                     _displayController?.Dispose();
+                    _pictureController?.Dispose();
+                    _audioController?.Dispose();
                     _pipeServer?.Dispose();
                 }
                 _disposed = true;

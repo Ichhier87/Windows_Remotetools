@@ -23,6 +23,7 @@ namespace WindowsRemoteTools
             public const string ShowWarning = "show_warning";
             public const string ShowError = "show_error";
             public const string ShowBlockingScreen = "show_blocking_screen";
+            public const string ShowPicture = "show_picture";
             public const string Shutdown = "shutdown";
 
             // UI → Service Commands
