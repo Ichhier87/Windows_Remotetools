@@ -1,0 +1,12 @@
+{
+  "WsHost": "localhost",
+  "WsPort": 9090,
+  "WsUseSSL": true,
+  "DeviceName": "MyWindowsPC",
+  "Username": null,
+  "Password": null,
+  "MaxVolume": 100,
+  "VolumeCheckInterval": 1.0,
+  "EnforceMaxVolume": true,
+  "IgnoreSslErrors": true
+}

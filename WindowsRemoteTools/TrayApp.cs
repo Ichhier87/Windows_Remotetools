@@ -10,18 +10,13 @@ namespace WindowsRemoteTools
     public class TrayApp : ApplicationContext
     {
         private readonly NotifyIcon _notifyIcon;
-        private readonly ConfigManager _config;
-        private readonly VolumeController _volumeController;
-        private readonly OverlayWindow _overlayWindow;
-        private readonly WebSocketClient _webSocketClient;
+        private readonly RemoteToolsCore _core;
 
         public TrayApp()
         {
-            // Initialize components
-            _config = ConfigManager.Load();
-            _volumeController = new VolumeController(_config);
-            _overlayWindow = new OverlayWindow();
-            _webSocketClient = new WebSocketClient(_config, _volumeController, _overlayWindow);
+            // Initialize core components with direct overlay (GUI mode)
+            _core = new RemoteToolsCore(useOverlayDirectly: true);
+            _core.Start();
 
             // Create tray icon
             _notifyIcon = new NotifyIcon
@@ -32,14 +27,6 @@ namespace WindowsRemoteTools
             };
 
             _notifyIcon.ContextMenuStrip = CreateContextMenu();
-
-            // Start components
-            _webSocketClient.Start();
-
-            if (_config.EnforceMaxVolume)
-            {
-                _volumeController.StartMonitoring();
-            }
 
             Console.WriteLine("Tray application started");
         }
@@ -63,30 +50,30 @@ namespace WindowsRemoteTools
             var menu = new ContextMenuStrip();
 
             // Status
-            menu.Items.Add($"Status: {_webSocketClient.GetStatus()}", null, null).Enabled = false;
+            menu.Items.Add($"Status: {_core.WebSocketClient.GetStatus()}", null, null).Enabled = false;
             menu.Items.Add(new ToolStripSeparator());
 
             // WebSocket submenu
             var wsMenu = new ToolStripMenuItem("WebSocket");
-            wsMenu.DropDownItems.Add(_webSocketClient.IsConnected ? "Disconnect" : "Connect", null, ToggleWebSocket);
-            wsMenu.DropDownItems.Add($"Server: {_config.WebSocketUrl}", null, null).Enabled = false;
+            wsMenu.DropDownItems.Add(_core.WebSocketClient.IsConnected ? "Disconnect" : "Connect", null, ToggleWebSocket);
+            wsMenu.DropDownItems.Add($"Server: {_core.Config.WebSocketUrl}", null, null).Enabled = false;
             menu.Items.Add(wsMenu);
 
             // Volume submenu
             var volumeMenu = new ToolStripMenuItem("Volume");
-            volumeMenu.DropDownItems.Add($"Current: {_volumeController.GetVolumePercent()}%", null, null).Enabled = false;
-            volumeMenu.DropDownItems.Add($"Max Limit: {_config.MaxVolume}%", null, null).Enabled = false;
+            volumeMenu.DropDownItems.Add($"Current: {_core.VolumeController.GetVolumePercent()}%", null, null).Enabled = false;
+            volumeMenu.DropDownItems.Add($"Max Limit: {_core.Config.MaxVolume}%", null, null).Enabled = false;
             volumeMenu.DropDownItems.Add(new ToolStripSeparator());
 
             var muteItem = new ToolStripMenuItem("Mute", null, ToggleMute)
             {
-                Checked = _volumeController.GetMute()
+                Checked = _core.VolumeController.GetMute()
             };
             volumeMenu.DropDownItems.Add(muteItem);
 
             var enforceItem = new ToolStripMenuItem("Enforce Max Volume", null, ToggleVolumeEnforcement)
             {
-                Checked = _config.EnforceMaxVolume
+                Checked = _core.Config.EnforceMaxVolume
             };
             volumeMenu.DropDownItems.Add(enforceItem);
 
@@ -99,8 +86,8 @@ namespace WindowsRemoteTools
             // Overlay submenu
             var overlayMenu = new ToolStripMenuItem("Overlay");
             overlayMenu.DropDownItems.Add("Show Test Overlay", null, TestOverlay);
-            overlayMenu.DropDownItems.Add("Show Blocking Screen", null, (s, e) => _overlayWindow.ShowBlockingScreen("Test Lock"));
-            overlayMenu.DropDownItems.Add("Hide Overlay", null, (s, e) => _overlayWindow.Hide());
+            overlayMenu.DropDownItems.Add("Show Blocking Screen", null, (s, e) => _core.OverlayWindow?.ShowBlockingScreen("Test Lock"));
+            overlayMenu.DropDownItems.Add("Hide Overlay", null, (s, e) => _core.OverlayWindow?.Hide());
             menu.Items.Add(overlayMenu);
 
             menu.Items.Add(new ToolStripSeparator());
@@ -108,7 +95,7 @@ namespace WindowsRemoteTools
             // Monitoring
             var monitorItem = new ToolStripMenuItem("Volume Monitoring", null, ToggleMonitoring)
             {
-                Checked = _volumeController._monitoring
+                Checked = _core.VolumeController._monitoring
             };
             menu.Items.Add(monitorItem);
 
@@ -127,51 +114,51 @@ namespace WindowsRemoteTools
 
         private void ToggleWebSocket(object? sender, EventArgs e)
         {
-            if (_webSocketClient.IsConnected)
+            if (_core.WebSocketClient.IsConnected)
             {
-                _webSocketClient.Stop();
+                _core.WebSocketClient.Stop();
             }
             else
             {
-                _webSocketClient.Start();
+                _core.WebSocketClient.Start();
             }
             RefreshMenu();
         }
 
         private void ToggleMute(object? sender, EventArgs e)
         {
-            _volumeController.ToggleMute();
+            _core.VolumeController.ToggleMute();
             RefreshMenu();
         }
 
         private void ToggleVolumeEnforcement(object? sender, EventArgs e)
         {
-            _volumeController.EnableEnforcement(!_config.EnforceMaxVolume);
+            _core.VolumeController.EnableEnforcement(!_core.Config.EnforceMaxVolume);
             RefreshMenu();
         }
 
         private void SetMaxVolume(int maxVolume)
         {
-            _volumeController.SetMaxVolumeLimit(maxVolume);
+            _core.VolumeController.SetMaxVolumeLimit(maxVolume);
             RefreshMenu();
         }
 
         private void ToggleMonitoring(object? sender, EventArgs e)
         {
-            if (_volumeController._monitoring)
+            if (_core.VolumeController._monitoring)
             {
-                _volumeController.StopMonitoring();
+                _core.VolumeController.StopMonitoring();
             }
             else
             {
-                _volumeController.StartMonitoring();
+                _core.VolumeController.StartMonitoring();
             }
             RefreshMenu();
         }
 
         private void TestOverlay(object? sender, EventArgs e)
         {
-            _overlayWindow.ShowAsync(
+            _core.OverlayWindow?.ShowAsync(
                 "Test Overlay\n\nThis is a test message",
                 Color.DarkBlue,
                 Color.White,
@@ -183,9 +170,7 @@ namespace WindowsRemoteTools
         {
             Console.WriteLine("Shutting down...");
 
-            _webSocketClient?.Dispose();
-            _volumeController?.Dispose();
-            _overlayWindow?.Hide();
+            _core?.Dispose();
 
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
@@ -198,8 +183,7 @@ namespace WindowsRemoteTools
             if (disposing)
             {
                 _notifyIcon?.Dispose();
-                _webSocketClient?.Dispose();
-                _volumeController?.Dispose();
+                _core?.Dispose();
             }
             base.Dispose(disposing);
         }
