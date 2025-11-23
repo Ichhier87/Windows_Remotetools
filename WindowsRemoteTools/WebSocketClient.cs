@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Net.Security;
 using System.Net.WebSockets;
 using System.Security.Cryptography.X509Certificates;
@@ -289,6 +290,18 @@ namespace WindowsRemoteTools
                 case "GPS":
                     // Not implemented for Windows - send default response
                     await SendNotSupportedResponse(data["UUID"]?.ToString(), messageType);
+                    break;
+
+                case "PLUGIN":
+                    await HandlePluginOperation(data);
+                    break;
+
+                case "MEDIA_SYNC":
+                    await HandleMediaSyncOperation(data);
+                    break;
+
+                case "MEDIA_PULL":
+                    await HandleMediaPullOperation(data);
                     break;
 
                 default:
@@ -625,9 +638,13 @@ namespace WindowsRemoteTools
         {
             var operation = data["OP"]?.ToString();
             var uuid = data["UUID"]?.ToString();
-            var type = data["type"]?.ToString()?.ToLower();
+            var type = data["fileType"]?.ToString()?.ToLower();
 
-            Console.WriteLine($"Received FILES operation: {operation} (type: {type})");
+            // Normalize type names (audio -> sound, image -> picture)
+            if (type == "audio") type = "sound";
+            if (type == "image") type = "picture";
+
+            Console.WriteLine($"Received FILES operation: {operation} (fileType: {type})");
 
             switch (operation?.ToLower())
             {
@@ -663,7 +680,8 @@ namespace WindowsRemoteTools
                     {
                         var fileArray = new JArray();
 
-                        if (type == "sound")
+                        // List audio files if type is "sound" or "all" or empty
+                        if (type == "sound" || type == "all" || string.IsNullOrEmpty(type))
                         {
                             var sounds = _audioController.ListAll();
                             foreach (var sound in sounds)
@@ -678,7 +696,9 @@ namespace WindowsRemoteTools
                                 });
                             }
                         }
-                        else
+
+                        // List images if type is "picture" or "all" or empty
+                        if (type == "picture" || type == "all" || string.IsNullOrEmpty(type))
                         {
                             var pictures = _pictureController.ListAll();
                             foreach (var pic in pictures)
@@ -721,6 +741,297 @@ namespace WindowsRemoteTools
                 ["message"] = $"Operation '{operation}' is not supported on Windows devices"
             });
             Console.WriteLine($"Operation '{operation}' not supported - sent default response");
+        }
+
+        private async Task HandlePluginOperation(JObject data)
+        {
+            var plugin = data["PLUGIN"]?.ToString();
+            var dir = data["dir"]?.ToString();
+            var uuid = data["UUID"]?.ToString();
+            var parameters = data["params"];
+
+            Console.WriteLine($"Received PLUGIN operation: {plugin} - {dir}");
+
+            if (plugin == "Remotetools_Notifications")
+            {
+                await HandleNotificationPlugin(dir, uuid, parameters);
+            }
+            else
+            {
+                await SendNotSupportedResponse(uuid, $"PLUGIN.{plugin}");
+            }
+        }
+
+        private async Task HandleNotificationPlugin(string? dir, string? uuid, JToken? parameters)
+        {
+            switch (dir)
+            {
+                case "/Plugin/Remotetools_Notifications/Add":
+                    {
+                        var level = parameters?["level"]?.ToString() ?? "info";
+                        var message = parameters?["message"]?.ToString() ?? "";
+                        var timestamp = parameters?["timestamp"]?.ToObject<long>() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                        NotificationStorage.AddNotification(level, message, timestamp);
+                        Console.WriteLine($"Added notification: [{level}] {message}");
+
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["status"] = "success",
+                            ["count"] = NotificationStorage.GetCount()
+                        });
+                        break;
+                    }
+
+                case "/Plugin/Remotetools_Notifications/Get":
+                    {
+                        var notifications = NotificationStorage.GetNotifications();
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["notifications"] = JArray.FromObject(notifications),
+                            ["count"] = notifications.Count
+                        });
+                        break;
+                    }
+
+                case "/Plugin/Remotetools_Notifications/Count":
+                    {
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["count"] = NotificationStorage.GetCount()
+                        });
+                        break;
+                    }
+
+                case "/Plugin/Remotetools_Notifications/Clear":
+                    {
+                        NotificationStorage.Clear();
+                        Console.WriteLine("Cleared all notifications");
+
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["status"] = "success",
+                            ["count"] = 0
+                        });
+                        break;
+                    }
+
+                case "/Plugin/Remotetools_Notifications/GetByLevel":
+                    {
+                        var level = parameters?["level"]?.ToString() ?? "info";
+                        var notifications = NotificationStorage.GetNotificationsByLevel(level);
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["notifications"] = JArray.FromObject(notifications),
+                            ["count"] = notifications.Count,
+                            ["level"] = level
+                        });
+                        break;
+                    }
+
+                default:
+                    await SendNotSupportedResponse(uuid, $"Remotetools_Notifications.{dir}");
+                    break;
+            }
+        }
+
+        private async Task HandleMediaSyncOperation(JObject data)
+        {
+            var filename = data["filename"]?.ToString();
+            var base64Data = data["data"]?.ToString();
+            var fileType = data["fileType"]?.ToString()?.ToLower();
+            var size = data["size"]?.ToObject<long>() ?? 0;
+            var hash = data["hash"]?.ToString();
+            var uuid = data["UUID"]?.ToString();
+
+            Console.WriteLine($"Received MEDIA_SYNC: {filename} (type: {fileType}, size: {size} bytes)");
+
+            if (string.IsNullOrEmpty(filename) || string.IsNullOrEmpty(base64Data) || string.IsNullOrEmpty(fileType))
+            {
+                await SendMessage(new JObject
+                {
+                    ["UUID"] = uuid,
+                    ["type"] = "MEDIA_SYNC_RESPONSE",
+                    ["status"] = "error",
+                    ["message"] = "Missing required fields"
+                });
+                return;
+            }
+
+            try
+            {
+                bool success = false;
+                string savedPath = "";
+
+                // Save file based on type
+                if (fileType == "audio")
+                {
+                    success = _audioController.SaveAudioBase64(filename, base64Data);
+                    if (success)
+                    {
+                        savedPath = _audioController.AudioDirectory;
+                    }
+                }
+                else if (fileType == "image")
+                {
+                    success = _pictureController.SavePictureBase64(filename, base64Data);
+                    if (success)
+                    {
+                        savedPath = _pictureController.PictureDirectory;
+                    }
+                }
+                else
+                {
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["type"] = "MEDIA_SYNC_RESPONSE",
+                        ["status"] = "error",
+                        ["message"] = $"Unsupported file type: {fileType}"
+                    });
+                    return;
+                }
+
+                if (success)
+                {
+                    Console.WriteLine($"Media sync successful: {filename} saved to {savedPath}");
+
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["type"] = "MEDIA_SYNC_RESPONSE",
+                        ["status"] = "success",
+                        ["filename"] = filename,
+                        ["fileType"] = fileType,
+                        ["size"] = size,
+                        ["hash"] = hash,
+                        ["savedPath"] = savedPath
+                    });
+                }
+                else
+                {
+                    Console.WriteLine($"Media sync failed: {filename}");
+
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["type"] = "MEDIA_SYNC_RESPONSE",
+                        ["status"] = "error",
+                        ["message"] = "Failed to save file"
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during media sync: {ex.Message}");
+
+                await SendMessage(new JObject
+                {
+                    ["UUID"] = uuid,
+                    ["type"] = "MEDIA_SYNC_RESPONSE",
+                    ["status"] = "error",
+                    ["message"] = ex.Message
+                });
+            }
+        }
+
+        private async Task HandleMediaPullOperation(JObject data)
+        {
+            var filename = data["filename"]?.ToString();
+            var fileType = data["fileType"]?.ToString()?.ToLower();
+            var uuid = data["UUID"]?.ToString();
+
+            // Normalize type names (audio -> sound, image -> picture)
+            var normalizedType = fileType;
+            if (fileType == "audio") normalizedType = "sound";
+            if (fileType == "image") normalizedType = "picture";
+
+            Console.WriteLine($"Received MEDIA_PULL request: {filename} (type: {fileType} -> {normalizedType})");
+
+            if (string.IsNullOrEmpty(filename) || string.IsNullOrEmpty(fileType))
+            {
+                await SendMessage(new JObject
+                {
+                    ["UUID"] = uuid,
+                    ["status"] = "error",
+                    ["message"] = "Missing filename or fileType"
+                });
+                return;
+            }
+
+            try
+            {
+                string filePath = "";
+                bool fileExists = false;
+
+                // Locate file based on type
+                if (normalizedType == "sound")
+                {
+                    filePath = Path.Combine(_audioController.AudioDirectory, filename);
+                    fileExists = File.Exists(filePath);
+                }
+                else if (normalizedType == "picture")
+                {
+                    filePath = Path.Combine(_pictureController.PictureDirectory, filename);
+                    fileExists = File.Exists(filePath);
+                }
+                else
+                {
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["status"] = "error",
+                        ["message"] = $"Unsupported file type: {fileType}"
+                    });
+                    return;
+                }
+
+                if (!fileExists)
+                {
+                    Console.WriteLine($"File not found: {filePath}");
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["status"] = "error",
+                        ["message"] = "File not found on device"
+                    });
+                    return;
+                }
+
+                // Read file and convert to base64
+                byte[] fileBytes = File.ReadAllBytes(filePath);
+                string base64Data = Convert.ToBase64String(fileBytes);
+
+                Console.WriteLine($"Sending file {filename} ({fileBytes.Length} bytes) to server");
+
+                await SendMessage(new JObject
+                {
+                    ["UUID"] = uuid,
+                    ["status"] = "success",
+                    ["filename"] = filename,
+                    ["fileType"] = fileType,
+                    ["size"] = fileBytes.Length,
+                    ["data"] = base64Data
+                });
+
+                Console.WriteLine($"File {filename} sent successfully");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during media pull: {ex.Message}");
+
+                await SendMessage(new JObject
+                {
+                    ["UUID"] = uuid,
+                    ["status"] = "error",
+                    ["message"] = ex.Message
+                });
+            }
         }
 
         private async Task SendOverlayCommand(string messageType, object? data = null)
