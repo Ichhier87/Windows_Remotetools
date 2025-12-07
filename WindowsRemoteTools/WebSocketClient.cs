@@ -317,7 +317,7 @@ namespace WindowsRemoteTools
 
             Console.WriteLine($"Received REC operation: {operation}");
 
-            switch (operation?.ToLower())
+            switch (operation)
             {
                 case "load_settings":
                     // Return default recording settings (recording not implemented for Windows)
@@ -358,7 +358,7 @@ namespace WindowsRemoteTools
 
             Console.WriteLine($"Received AUDIO_SETTINGS operation: {operation}");
 
-            switch (operation?.ToLower())
+            switch (operation)
             {
                 case "get_volumeinfo":
                     await SendMessage(new JObject
@@ -406,9 +406,9 @@ namespace WindowsRemoteTools
 
             Console.WriteLine($"Received DISPLAY operation: {operation}");
 
-            switch (operation?.ToLower())
+            switch (operation)
             {
-                case "setbrightness":
+                case "setBrightness":
                     {
                         var brightness = data["val"]?.ToObject<int>() ?? 50;
                         _displayController.SetBrightness(brightness);
@@ -429,7 +429,7 @@ namespace WindowsRemoteTools
                     });
                     break;
 
-                case "closewindow":
+                case "closeWindow":
                     await SendOverlayCommand(PipeMessage.MessageTypes.HideOverlay);
                     await SendMessage(new JObject
                     {
@@ -455,7 +455,7 @@ namespace WindowsRemoteTools
                         break;
                     }
 
-                case "listall":
+                case "listAll":
                     {
                         var pictures = _pictureController.ListAll();
                         var pictureArray = new JArray();
@@ -520,12 +520,12 @@ namespace WindowsRemoteTools
 
             Console.WriteLine($"Received AUDIO_PLAYBACK operation: {operation}");
 
-            switch (operation?.ToLower())
+            switch (operation)
             {
-                case "playsound":
+                case "playSound":
                     {
-                        var filename = data["name"]?.ToString();
-                        var loop = data["loop"]?.ToObject<bool>() ?? false;
+                        var filename = data["file"]?.ToString();
+                        var loop = data["loop"]?.ToString() == "true";
 
                         if (!string.IsNullOrEmpty(filename))
                         {
@@ -542,7 +542,7 @@ namespace WindowsRemoteTools
                     }
 
                 case "stopsound":
-                case "stopall":
+                case "stopAll":
                     _audioController.Stop();
                     await SendMessage(new JObject
                     {
@@ -551,7 +551,7 @@ namespace WindowsRemoteTools
                     });
                     break;
 
-                case "listall":
+                case "listAll":
                     {
                         var sounds = _audioController.ListAll();
                         var soundArray = new JArray();
@@ -646,12 +646,12 @@ namespace WindowsRemoteTools
 
             Console.WriteLine($"Received FILES operation: {operation} (fileType: {type})");
 
-            switch (operation?.ToLower())
+            switch (operation)
             {
-                case "deletepure":
+                case "deletePure":
                 case "remove":
                     {
-                        var filename = data["name"]?.ToString();
+                        var filename = data["filename"]?.ToString();
                         if (!string.IsNullOrEmpty(filename))
                         {
                             bool success = false;
@@ -676,7 +676,7 @@ namespace WindowsRemoteTools
                         break;
                     }
 
-                case "listall":
+                case "listAll":
                     {
                         var fileArray = new JArray();
 
