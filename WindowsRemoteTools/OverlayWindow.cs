@@ -146,6 +146,20 @@ namespace WindowsRemoteTools
             ShowAsync(message, Color.Black, Color.Red, 0.95);
         }
 
+        public void ShowLockedScreen(string message, string passwordHash, Action? onUnlocked = null)
+        {
+            Hide();
+            var thread = new Thread(() =>
+            {
+                Application.EnableVisualStyles();
+                var form = new LockedOverlayForm(message, passwordHash, onUnlocked);
+                Application.Run(form);
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.IsBackground = true;
+            thread.Start();
+        }
+
         public void ShowNotification(string message)
         {
             ShowAsync(message, Color.Blue, Color.White, 0.7);

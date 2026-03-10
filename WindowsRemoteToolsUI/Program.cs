@@ -94,6 +94,19 @@ namespace WindowsRemoteToolsUI
                     HandleShowBlockingScreen(message);
                     break;
 
+                case PipeMessage.MessageTypes.ShowLockedScreen:
+                    if (message.Data is Newtonsoft.Json.Linq.JObject jo)
+                    {
+                        var lockedData = jo.ToObject<LockedOverlayData>();
+                        if (lockedData != null)
+                            _overlayWindow.ShowLockedScreen(
+                                lockedData.Message,
+                                lockedData.PasswordHash,
+                                () => _ = _pipeClient.SendMessageAsync(
+                                        PipeMessage.Create(PipeMessage.MessageTypes.ScreenUnlocked)));
+                    }
+                    break;
+
                 case PipeMessage.MessageTypes.Shutdown:
                     Shutdown();
                     break;

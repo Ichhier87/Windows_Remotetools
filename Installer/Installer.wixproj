@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX v4 Installer Project
+  Build with:  dotnet build Installer.wixproj -c Release
+  Or via:      Build-Installer.ps1 in the solution root
+
+  Prerequisites:
+    - .NET 8 SDK
+    - Both C# projects must be built in Release first:
+        dotnet build ../WindowsRemoteTools.sln -c Release
+-->
+<Project Sdk="WixToolset.Sdk/4.0.5">
+
+  <PropertyGroup>
+    <OutputName>WindowsRemoteToolsSetup</OutputName>
+    <!-- Platform must be x64 to match .NET 8 x64 binaries -->
+    <Platform>x64</Platform>
+    <InstallerPlatform>x64</InstallerPlatform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext"   Version="4.0.5" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.5" />
+    <PackageReference Include="WixToolset.NetFx.wixext" Version="4.0.5" />
+  </ItemGroup>
+
+</Project>

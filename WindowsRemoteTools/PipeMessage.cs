@@ -24,12 +24,14 @@ namespace WindowsRemoteTools
             public const string ShowError = "show_error";
             public const string ShowBlockingScreen = "show_blocking_screen";
             public const string ShowPicture = "show_picture";
+            public const string ShowLockedScreen = "show_locked_screen";
             public const string Shutdown = "shutdown";
 
             // UI → Service Commands
             public const string Heartbeat = "heartbeat";
             public const string Ready = "ready";
             public const string Closed = "closed";
+            public const string ScreenUnlocked = "screen_unlocked";
         }
 
         public static PipeMessage Create(string type, object? data = null)
@@ -53,6 +55,18 @@ namespace WindowsRemoteTools
                 return null;
             }
         }
+    }
+
+    /// <summary>
+    /// Data for locked overlay display command
+    /// </summary>
+    public class LockedOverlayData
+    {
+        [JsonProperty("message")]
+        public string Message { get; set; } = "Screen Locked";
+
+        [JsonProperty("password_hash")]
+        public string PasswordHash { get; set; } = "";
     }
 
     /// <summary>

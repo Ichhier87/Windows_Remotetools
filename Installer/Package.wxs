@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Windows Remote Tools - WiX v4 Installer
+  =========================================
+  Installiert:
+    - Windows Remote Tools Service  (WindowsRemoteTools.exe -service)
+    - Windows Remote Tools UI Tray  (WindowsRemoteToolsUI.exe)
+    - Alle .NET-Abhaengigkeiten
+    - config.json (Standard-Konfiguration; nur bei Erstinstallation)
+
+  Upgrade-Code: {4B7E9A2C-1D3F-4E5B-8C7A-9D0E1F2A3B4C}
+  Diesen GUID niemals aendern - er identifiziert das Produkt ueber alle Versionen.
+
+  HINWEIS: Falls neue NuGet-Abhaengigkeiten hinzugekommen sind, muessen die
+  entsprechenden DLLs als neue Component-Eintraege ergaenzt werden.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx">
+
+  <!-- ================================================================
+       .NET 8 Desktop Runtime Suche (Fragment-Ebene, nicht in Package)
+       ================================================================ -->
+  <Fragment>
+    <netfx:DotNetCoreSearch
+      Id="Dotnet8DesktopSearch"
+      Variable="DOTNET8DESKTOP"
+      RuntimeType="desktop"
+      Platform="x64"
+      MajorVersion="8" />
+  </Fragment>
+
+  <!-- ================================================================
+       PAKET-DEFINITION
+       ================================================================ -->
+  <Package
+    Name="Windows Remote Tools"
+    Manufacturer="Remote Tools"
+    Version="1.0.0"
+    UpgradeCode="{4B7E9A2C-1D3F-4E5B-8C7A-9D0E1F2A3B4C}"
+    Language="1033"
+    Scope="perMachine">
+
+    <!-- Neuere Version verdraengt aeltere, aber nicht umgekehrt -->
+    <MajorUpgrade
+      DowngradeErrorMessage="Eine neuere Version von Windows Remote Tools ist bereits installiert." />
+
+    <!-- CAB in MSI einbetten (Single-File-Setup) -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Voraussetzung: .NET 8.0 Desktop Runtime (x64) -->
+    <Launch
+      Condition="DOTNET8DESKTOP"
+      Message=".NET 8 Desktop Runtime (x64) wird benoetigt.&#13;&#10;Download: https://dotnet.microsoft.com/download/dotnet/8.0" />
+
+    <!-- ================================================================
+         UI
+         ================================================================ -->
+
+    <!-- ================================================================
+         VERZEICHNISSTRUKTUR
+         ================================================================ -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLDIR" Name="Windows Remote Tools">
+        <!-- runtimes\win\lib\net8.0\ fuer plattformspezifische DLLs -->
+        <Directory Id="dir_runtimes"   Name="runtimes">
+          <Directory Id="dir_win"      Name="win">
+            <Directory Id="dir_lib"    Name="lib">
+              <Directory Id="dir_net8" Name="net8.0" />
+            </Directory>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Startmenue-Verzeichnis -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="dir_StartMenu" Name="Windows Remote Tools" />
+    </StandardDirectory>
+
+    <!-- ================================================================
+         KOMPONENTEN - SERVICE
+         WICHTIG: WindowsRemoteTools.exe ist KeyPath → ServiceInstall
+         leitet den BinaryPath daraus ab (Arguments: -service flag).
+         ================================================================ -->
+
+    <Component Id="cmp_ServiceExe" Directory="INSTALLDIR">
+      <File Id="fil_ServiceExe"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\WindowsRemoteTools.exe"
+            KeyPath="yes" />
+
+      <ServiceInstall
+        Id="WRT_ServiceInstall"
+        Name="WindowsRemoteToolsService"
+        DisplayName="Windows Remote Tools Service"
+        Description="Steuert Windows-Geraete remote ueber WebSocket. Startet automatisch den UI-Prozess."
+        Type="ownProcess"
+        Start="auto"
+        ErrorControl="normal"
+        Account="LocalSystem"
+        Arguments="--service"
+        Interactive="no" />
+
+      <ServiceControl
+        Id="WRT_ServiceControl"
+        Name="WindowsRemoteToolsService"
+        Start="install"
+        Stop="both"
+        Remove="uninstall"
+        Wait="yes" />
+
+      <!-- Service-Wiederherstellung bei Fehlern (1min / 2min / 5min) -->
+      <util:ServiceConfig
+        ServiceName="WindowsRemoteToolsService"
+        FirstFailureActionType="restart"
+        SecondFailureActionType="restart"
+        ThirdFailureActionType="restart"
+        RestartServiceDelayInSeconds="60"
+        ResetPeriodInDays="1" />
+    </Component>
+
+    <Component Id="cmp_ServiceDll" Directory="INSTALLDIR">
+      <File Id="fil_ServiceDll"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\WindowsRemoteTools.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_ServiceDepsJson" Directory="INSTALLDIR">
+      <File Id="fil_ServiceDepsJson"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\WindowsRemoteTools.deps.json"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_ServiceRuntimeConfig" Directory="INSTALLDIR">
+      <File Id="fil_ServiceRuntimeConfig"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\WindowsRemoteTools.runtimeconfig.json"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- ================================================================
+         KOMPONENTEN - UI
+         ================================================================ -->
+
+    <Component Id="cmp_UIExe" Directory="INSTALLDIR">
+      <File Id="fil_UIExe"
+            Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\WindowsRemoteToolsUI.exe"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_UIDll" Directory="INSTALLDIR">
+      <File Id="fil_UIDll"
+            Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\WindowsRemoteToolsUI.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_UIDepsJson" Directory="INSTALLDIR">
+      <File Id="fil_UIDepsJson"
+            Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\WindowsRemoteToolsUI.deps.json"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_UIRuntimeConfig" Directory="INSTALLDIR">
+      <File Id="fil_UIRuntimeConfig"
+            Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\WindowsRemoteToolsUI.runtimeconfig.json"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- ================================================================
+         KOMPONENTEN - NAUDIO
+         ================================================================ -->
+
+    <Component Id="cmp_NAudio" Directory="INSTALLDIR">
+      <File Id="fil_NAudio"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\NAudio.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_NAudio_Asio" Directory="INSTALLDIR">
+      <File Id="fil_NAudio_Asio"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\NAudio.Asio.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_NAudio_Core" Directory="INSTALLDIR">
+      <File Id="fil_NAudio_Core"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\NAudio.Core.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_NAudio_Midi" Directory="INSTALLDIR">
+      <File Id="fil_NAudio_Midi"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\NAudio.Midi.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_NAudio_Wasapi" Directory="INSTALLDIR">
+      <File Id="fil_NAudio_Wasapi"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\NAudio.Wasapi.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_NAudio_WinForms" Directory="INSTALLDIR">
+      <File Id="fil_NAudio_WinForms"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\NAudio.WinForms.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_NAudio_WinMM" Directory="INSTALLDIR">
+      <File Id="fil_NAudio_WinMM"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\NAudio.WinMM.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- ================================================================
+         KOMPONENTEN - .NET ABHAENGIGKEITEN
+         ================================================================ -->
+
+    <Component Id="cmp_NewtonsoftJson" Directory="INSTALLDIR">
+      <File Id="fil_NewtonsoftJson"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\Newtonsoft.Json.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_SysCodeDom" Directory="INSTALLDIR">
+      <File Id="fil_SysCodeDom"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\System.CodeDom.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_SysDiagEventLog" Directory="INSTALLDIR">
+      <File Id="fil_SysDiagEventLog"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\System.Diagnostics.EventLog.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_SysManagement" Directory="INSTALLDIR">
+      <File Id="fil_SysManagement"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\System.Management.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_SysSvcCtrl" Directory="INSTALLDIR">
+      <File Id="fil_SysSvcCtrl"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\System.ServiceProcess.ServiceController.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- ================================================================
+         KOMPONENTEN - RUNTIME-SPEZIFISCHE DLLS (runtimes\win\lib\net8.0\)
+         ================================================================ -->
+
+    <Component Id="cmp_rt_EventLog" Directory="dir_net8">
+      <File Id="fil_rt_EventLog"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\runtimes\win\lib\net8.0\System.Diagnostics.EventLog.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_rt_EventLogMessages" Directory="dir_net8">
+      <File Id="fil_rt_EventLogMessages"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\runtimes\win\lib\net8.0\System.Diagnostics.EventLog.Messages.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_rt_Management" Directory="dir_net8">
+      <File Id="fil_rt_Management"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\runtimes\win\lib\net8.0\System.Management.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_rt_SvcCtrl" Directory="dir_net8">
+      <File Id="fil_rt_SvcCtrl"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\runtimes\win\lib\net8.0\System.ServiceProcess.ServiceController.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- ================================================================
+         KONFIGURATIONSDATEI
+         Nur bei Erstinstallation (NOT Installed) → wird bei Upgrades nicht
+         ueberschrieben weil MajorUpgrade die alte Version entfernt und dann
+         der neue Installer die Datei frisch anlegt.
+         Tipp: config.json vor dem Upgrade sichern.
+         ================================================================ -->
+
+    <Component Id="cmp_Config" Directory="INSTALLDIR" NeverOverwrite="yes">
+      <File Id="fil_Config"
+            Source="config.default.json"
+            Name="config.json"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- ================================================================
+         STARTMENUE-SHORTCUTS
+         ================================================================ -->
+
+    <Component Id="cmp_Shortcuts" Directory="dir_StartMenu">
+      <RegistryValue
+        Root="HKCU"
+        Key="Software\WindowsRemoteTools"
+        Name="ShortcutsInstalled"
+        Value="1"
+        Type="integer"
+        KeyPath="yes" />
+
+      <Shortcut
+        Id="sc_Config"
+        Name="Konfiguration bearbeiten"
+        Description="config.json im Editor oeffnen"
+        Target="[SystemFolder]notepad.exe"
+        Arguments="[INSTALLDIR]config.json"
+        Directory="dir_StartMenu"
+        WorkingDirectory="INSTALLDIR" />
+
+      <Shortcut
+        Id="sc_Uninstall"
+        Name="Windows Remote Tools deinstallieren"
+        Description="Windows Remote Tools vom System entfernen"
+        Target="[SystemFolder]msiexec.exe"
+        Arguments="/x [ProductCode]"
+        Directory="dir_StartMenu" />
+
+      <RemoveFolder Id="rf_StartMenu" Directory="dir_StartMenu" On="uninstall" />
+    </Component>
+
+    <!-- ================================================================
+         FEATURE: Alle Komponenten in einem Feature
+         ================================================================ -->
+
+    <Feature Id="F_Main" Title="Windows Remote Tools" Level="1">
+      <!-- Service -->
+      <ComponentRef Id="cmp_ServiceExe" />
+      <ComponentRef Id="cmp_ServiceDll" />
+      <ComponentRef Id="cmp_ServiceDepsJson" />
+      <ComponentRef Id="cmp_ServiceRuntimeConfig" />
+      <!-- UI -->
+      <ComponentRef Id="cmp_UIExe" />
+      <ComponentRef Id="cmp_UIDll" />
+      <ComponentRef Id="cmp_UIDepsJson" />
+      <ComponentRef Id="cmp_UIRuntimeConfig" />
+      <!-- NAudio -->
+      <ComponentRef Id="cmp_NAudio" />
+      <ComponentRef Id="cmp_NAudio_Asio" />
+      <ComponentRef Id="cmp_NAudio_Core" />
+      <ComponentRef Id="cmp_NAudio_Midi" />
+      <ComponentRef Id="cmp_NAudio_Wasapi" />
+      <ComponentRef Id="cmp_NAudio_WinForms" />
+      <ComponentRef Id="cmp_NAudio_WinMM" />
+      <!-- .NET Abhaengigkeiten -->
+      <ComponentRef Id="cmp_NewtonsoftJson" />
+      <ComponentRef Id="cmp_SysCodeDom" />
+      <ComponentRef Id="cmp_SysDiagEventLog" />
+      <ComponentRef Id="cmp_SysManagement" />
+      <ComponentRef Id="cmp_SysSvcCtrl" />
+      <!-- Runtime-spezifisch -->
+      <ComponentRef Id="cmp_rt_EventLog" />
+      <ComponentRef Id="cmp_rt_EventLogMessages" />
+      <ComponentRef Id="cmp_rt_Management" />
+      <ComponentRef Id="cmp_rt_SvcCtrl" />
+      <!-- Config + Startmenue -->
+      <ComponentRef Id="cmp_Config" />
+      <ComponentRef Id="cmp_Shortcuts" />
+    </Feature>
+
+    <!-- In WiX v4: ui:WixUI statt UIRef -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLDIR" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+  </Package>
+</Wix>

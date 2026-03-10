@@ -41,6 +41,8 @@ namespace WindowsRemoteTools
             _audioController = audioController;
             _overlayWindow = overlayWindow;
             _pipeServer = pipeServer;
+            if (_pipeServer != null)
+                _pipeServer.MessageReceived += OnPipeMessageReceived;
         }
 
         public void Start()
@@ -1088,6 +1090,14 @@ namespace WindowsRemoteTools
                     _overlayWindow?.ShowBlockingScreen(data?.ToString() ?? "Screen Locked");
                     break;
 
+                case PipeMessage.MessageTypes.ShowLockedScreen:
+                    if (data is LockedOverlayData lockedData)
+                        _overlayWindow?.ShowLockedScreen(
+                            lockedData.Message,
+                            lockedData.PasswordHash,
+                            () => _ = SendScreenUnlockedToServer());
+                    break;
+
                 case PipeMessage.MessageTypes.ShowPicture:
                     if (data is string picturePath)
                     {
@@ -1203,6 +1213,15 @@ namespace WindowsRemoteTools
                         {
                             var msg = parameters["message"]?.ToString() ?? "Screen Locked";
                             await SendOverlayCommand(PipeMessage.MessageTypes.ShowBlockingScreen, msg);
+                            break;
+                        }
+
+                    case "show_locked_screen":
+                        {
+                            var msg = parameters["message"]?.ToString() ?? "Screen Locked";
+                            var passwordHash = parameters["password_hash"]?.ToString() ?? "";
+                            var data = new LockedOverlayData { Message = msg, PasswordHash = passwordHash };
+                            await SendOverlayCommand(PipeMessage.MessageTypes.ShowLockedScreen, data);
                             break;
                         }
 
@@ -1389,6 +1408,17 @@ namespace WindowsRemoteTools
             {
                 return Color.Black;
             }
+        }
+
+        private void OnPipeMessageReceived(object? sender, PipeMessage message)
+        {
+            if (message.Type == PipeMessage.MessageTypes.ScreenUnlocked)
+                _ = SendScreenUnlockedToServer();
+        }
+
+        private async Task SendScreenUnlockedToServer()
+        {
+            await SendMessage(new JObject { ["type"] = "SCREEN_UNLOCKED" });
         }
 
         public string GetStatus()
