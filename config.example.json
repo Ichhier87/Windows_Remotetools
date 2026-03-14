@@ -8,5 +8,5 @@
   "MaxVolume": 100,
   "VolumeCheckInterval": 1.0,
   "EnforceMaxVolume": true,
-  "IgnoreSslErrors": true
+  "IgnoreSslErrors": false
 }

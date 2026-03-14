@@ -306,6 +306,19 @@ namespace WindowsRemoteTools
                     await HandleMediaPullOperation(data);
                     break;
 
+                case "DEVICE_SETTINGS":
+                    await HandleDeviceSettingsOperation(data);
+                    break;
+
+                case "SVG_OVERLAY":
+                    await HandleSVGOverlayOperation(data);
+                    break;
+
+                case "SCREENSHOT_REQUEST":
+                case "SCREENSHOT_PERMISSION_REQUEST":
+                    await SendNotSupportedResponse(data["UUID"]?.ToString(), messageType);
+                    break;
+
                 default:
                     Console.WriteLine($"Unknown server message type: {messageType}");
                     break;
@@ -378,7 +391,7 @@ namespace WindowsRemoteTools
                         await SendMessage(new JObject
                         {
                             ["UUID"] = uuid,
-                            ["volume"] = _volumeController.GetVolumePercent()
+                            ["vol"] = _volumeController.GetVolumePercent()
                         });
                         break;
                     }
@@ -390,7 +403,7 @@ namespace WindowsRemoteTools
                         await SendMessage(new JObject
                         {
                             ["UUID"] = uuid,
-                            ["maxVolume"] = _config.MaxVolume
+                            ["max_vol"] = _config.MaxVolume
                         });
                         break;
                     }
@@ -728,6 +741,105 @@ namespace WindowsRemoteTools
 
                 default:
                     await SendNotSupportedResponse(uuid, $"FILES.{operation}");
+                    break;
+            }
+        }
+
+        private async Task HandleDeviceSettingsOperation(JObject data)
+        {
+            var operation = data["Operation"]?.ToString();
+            var uuid = data["UUID"]?.ToString();
+
+            Console.WriteLine($"Received DEVICE_SETTINGS operation: {operation}");
+
+            switch (operation)
+            {
+                case "GET_ALL_SETTINGS":
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["deviceName"] = _config.DeviceName,
+                        ["maxVolume"] = _config.MaxVolume,
+                        ["enforceMaxVolume"] = _config.EnforceMaxVolume,
+                        ["deviceType"] = _config.DeviceType,
+                        ["platform"] = _config.Platform,
+                        ["osVersion"] = _config.OSVersion
+                    });
+                    break;
+
+                case "SET_NAME":
+                    {
+                        var newName = data["deviceName"]?.ToString();
+                        if (!string.IsNullOrEmpty(newName))
+                        {
+                            _config.DeviceName = newName;
+                            _config.Save();
+                        }
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["success"] = true,
+                            ["deviceName"] = _config.DeviceName
+                        });
+                        break;
+                    }
+
+                case "SET_SETTING":
+                    // Acknowledge settings changes (applying them is optional per category)
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["success"] = true
+                    });
+                    break;
+
+                default:
+                    await SendNotSupportedResponse(uuid, $"DEVICE_SETTINGS.{operation}");
+                    break;
+            }
+        }
+
+        private async Task HandleSVGOverlayOperation(JObject data)
+        {
+            var operation = data["OP"]?.ToString();
+            var uuid = data["UUID"]?.ToString();
+
+            Console.WriteLine($"Received SVG_OVERLAY operation: {operation}");
+
+            switch (operation)
+            {
+                case "show":
+                case "update":
+                    {
+                        var text = data["text"]?.ToString();
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            await SendOverlayCommand(PipeMessage.MessageTypes.ShowOverlay, new OverlayData { Message = text });
+                        }
+                        await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ok" });
+                        break;
+                    }
+
+                case "close":
+                    await SendOverlayCommand(PipeMessage.MessageTypes.HideOverlay);
+                    await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ok" });
+                    break;
+
+                case "getDisplayInfo":
+                    {
+                        var screen = System.Windows.Forms.Screen.PrimaryScreen;
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["width"] = screen?.Bounds.Width ?? 1920,
+                            ["height"] = screen?.Bounds.Height ?? 1080,
+                            ["status"] = "ok"
+                        });
+                        break;
+                    }
+
+                default:
+                    await SendNotSupportedResponse(uuid, $"SVG_OVERLAY.{operation}");
                     break;
             }
         }
@@ -1149,6 +1261,7 @@ namespace WindowsRemoteTools
                     {
                         ["CURRENT"] = currentVolume,
                         ["CURRENT_MAX"] = _config.MaxVolume,
+                        ["MAX"] = 100,
                         ["MIN"] = 0
                     },
 

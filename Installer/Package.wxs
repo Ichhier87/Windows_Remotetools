@@ -16,20 +16,7 @@
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
-     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
-     xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx">
-
-  <!-- ================================================================
-       .NET 8 Desktop Runtime Suche (Fragment-Ebene, nicht in Package)
-       ================================================================ -->
-  <Fragment>
-    <netfx:DotNetCoreSearch
-      Id="Dotnet8DesktopSearch"
-      Variable="DOTNET8DESKTOP"
-      RuntimeType="desktop"
-      Platform="x64"
-      MajorVersion="8" />
-  </Fragment>
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <!-- ================================================================
        PAKET-DEFINITION
@@ -49,10 +36,41 @@
     <!-- CAB in MSI einbetten (Single-File-Setup) -->
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- Voraussetzung: .NET 8.0 Desktop Runtime (x64) -->
+    <!-- ================================================================
+         .NET 8 Erkennung: Standard-MSI RegistrySearch (direkt im Package).
+         Bitness="always32" liest den WOW6432Node-Pfad, wo .NET auf diesem
+         System seine Installationsdaten tatsaechlich speichert.
+         DOTNETINSTALLED prueft InstallLocation (existiert bei jeder .NET-Installation).
+         ================================================================ -->
+    <Property Id="DOTNET8DESKTOP">
+      <RegistrySearch Id="Dotnet8DesktopSearch"
+        Root="HKLM"
+        Key="SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App"
+        Name="8.0.22"
+        Type="raw"
+        Bitness="always32" />
+    </Property>
+    <Property Id="DOTNET8DESKTOP_B">
+      <RegistrySearch Id="Dotnet8DesktopSearch_B"
+        Root="HKLM"
+        Key="SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App"
+        Name="8.0.25"
+        Type="raw"
+        Bitness="always32" />
+    </Property>
+    <Property Id="DOTNETINSTALLED">
+      <RegistrySearch Id="DotnetInstallLocationSearch"
+        Root="HKLM"
+        Key="SOFTWARE\dotnet\Setup\InstalledVersions\x64"
+        Name="InstallLocation"
+        Type="raw"
+        Bitness="always32" />
+    </Property>
+
+    <!-- Voraussetzung: .NET 8.0 Runtime (x64) -->
     <Launch
-      Condition="DOTNET8DESKTOP"
-      Message=".NET 8 Desktop Runtime (x64) wird benoetigt.&#13;&#10;Download: https://dotnet.microsoft.com/download/dotnet/8.0" />
+      Condition="DOTNET8DESKTOP OR DOTNET8DESKTOP_B OR DOTNETINSTALLED"
+      Message=".NET 8 Runtime (x64) wird benoetigt.&#13;&#10;Download: https://dotnet.microsoft.com/download/dotnet/8.0" />
 
     <!-- ================================================================
          UI
