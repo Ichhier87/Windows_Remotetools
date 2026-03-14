@@ -13,6 +13,8 @@ namespace WindowsRemoteTools
     {
         private Form? _currentForm;
         private readonly object _lock = new object();
+        private Form? _svgForm;
+        private readonly object _svgLock = new object();
 
         public void Show(string message = "", Color? backgroundColor = null, Color? textColor = null, double opacity = 0.9)
         {
@@ -136,6 +138,56 @@ namespace WindowsRemoteTools
                     finally
                     {
                         _currentForm = null;
+                    }
+                }
+            }
+        }
+
+        public void ShowSvgOverlay(SvgOverlayData data)
+        {
+            HideSvgOverlay();
+
+            var thread = new Thread(() =>
+            {
+                Application.EnableVisualStyles();
+                var form = new SvgOverlayForm(data);
+                lock (_svgLock)
+                {
+                    _svgForm = form;
+                }
+                form.FormClosed += (s, e) =>
+                {
+                    lock (_svgLock)
+                    {
+                        if (_svgForm == form)
+                            _svgForm = null;
+                    }
+                };
+                Application.Run(form);
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.IsBackground = true;
+            thread.Start();
+        }
+
+        public void HideSvgOverlay()
+        {
+            lock (_svgLock)
+            {
+                if (_svgForm != null)
+                {
+                    try
+                    {
+                        var f = _svgForm;
+                        if (f.InvokeRequired)
+                            f.Invoke(new Action(() => { f.Close(); f.Dispose(); }));
+                        else
+                        { f.Close(); f.Dispose(); }
+                    }
+                    catch { }
+                    finally
+                    {
+                        _svgForm = null;
                     }
                 }
             }

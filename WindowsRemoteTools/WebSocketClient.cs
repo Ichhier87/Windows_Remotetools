@@ -24,6 +24,7 @@ namespace WindowsRemoteTools
         private readonly AudioController _audioController;
         private readonly OverlayWindow? _overlayWindow;
         private readonly ServicePipeServer? _pipeServer;
+        private readonly AudioGroupManager _audioGroupManager;
         private ClientWebSocket? _webSocket;
         private CancellationTokenSource? _connectionCts;
         private Task? _connectionTask;
@@ -41,6 +42,7 @@ namespace WindowsRemoteTools
             _audioController = audioController;
             _overlayWindow = overlayWindow;
             _pipeServer = pipeServer;
+            _audioGroupManager = new AudioGroupManager(SendMessage);
             if (_pipeServer != null)
                 _pipeServer.MessageReceived += OnPipeMessageReceived;
         }
@@ -318,6 +320,80 @@ namespace WindowsRemoteTools
                 case "SCREENSHOT_PERMISSION_REQUEST":
                     await SendNotSupportedResponse(data["UUID"]?.ToString(), messageType);
                     break;
+
+                // Audio group messages
+                case "AUDIO_GROUP_FORCE_JOIN":
+                    {
+                        var groupId = data["group_id"]?.ToString();
+                        var groupName = data["group_name"]?.ToString();
+                        if (!string.IsNullOrEmpty(groupId))
+                        {
+                            Console.WriteLine($"[AudioGroup] Force-join: {groupName} ({groupId})");
+                            await _audioGroupManager.Join(groupId);
+                        }
+                        break;
+                    }
+
+                case "AUDIO_GROUP_PEERS":
+                    {
+                        var groupId = data["group_id"]?.ToString();
+                        var peers = data["peers"] as Newtonsoft.Json.Linq.JArray;
+                        if (peers != null && _audioGroupManager.InGroup)
+                            await _audioGroupManager.OnPeers(peers);
+                        break;
+                    }
+
+                case "AUDIO_GROUP_PEER_JOINED":
+                    {
+                        var peerId = data["peer_id"]?.ToString();
+                        if (!string.IsNullOrEmpty(peerId) && _audioGroupManager.InGroup)
+                            _audioGroupManager.OnPeerJoined(peerId);
+                        break;
+                    }
+
+                case "AUDIO_GROUP_PEER_LEFT":
+                    {
+                        var peerId = data["peer_id"]?.ToString();
+                        if (!string.IsNullOrEmpty(peerId))
+                            _audioGroupManager.OnPeerLeft(peerId);
+                        break;
+                    }
+
+                case "AUDIO_GROUP_KICKED":
+                    _audioGroupManager.Kicked();
+                    break;
+
+                case "AUDIO_GROUP_SET_OUTPUT":
+                    // Windows has no SPEAKER/BLUETOOTH/EARPIECE concept — ignored
+                    Console.WriteLine($"[AudioGroup] SET_OUTPUT ignored on Windows: {data["output"]}");
+                    break;
+
+                case "WEBRTC_OFFER":
+                    {
+                        var fromPeer = data["from"]?.ToString();
+                        var sdp = data["sdp"]?.ToString();
+                        if (!string.IsNullOrEmpty(fromPeer) && !string.IsNullOrEmpty(sdp))
+                            await _audioGroupManager.OnWebRtcOffer(fromPeer, sdp);
+                        break;
+                    }
+
+                case "WEBRTC_ANSWER":
+                    {
+                        var fromPeer = data["from"]?.ToString();
+                        var sdp = data["sdp"]?.ToString();
+                        if (!string.IsNullOrEmpty(fromPeer) && !string.IsNullOrEmpty(sdp))
+                            _audioGroupManager.OnWebRtcAnswer(fromPeer, sdp);
+                        break;
+                    }
+
+                case "WEBRTC_ICE_CANDIDATE":
+                    {
+                        var fromPeer = data["from"]?.ToString();
+                        var candidate = data["candidate"] as Newtonsoft.Json.Linq.JObject;
+                        if (!string.IsNullOrEmpty(fromPeer) && candidate != null)
+                            _audioGroupManager.OnIceCandidate(fromPeer, candidate);
+                        break;
+                    }
 
                 default:
                     Console.WriteLine($"Unknown server message type: {messageType}");
@@ -811,21 +887,34 @@ namespace WindowsRemoteTools
                 case "show":
                 case "update":
                     {
-                        var text = data["text"]?.ToString();
-                        if (!string.IsNullOrEmpty(text))
+                        var svgData = new SvgOverlayData
                         {
-                            await SendOverlayCommand(PipeMessage.MessageTypes.ShowOverlay, new OverlayData { Message = text });
-                        }
+                            Svg = data["svg"]?.ToString() ?? "",
+                            Text = data["text"]?.ToString() ?? "",
+                            Width = data["width"]?.ToObject<int>() ?? 300,
+                            Height = data["height"]?.ToObject<int>() ?? 100,
+                            X = data["x"]?.ToObject<int>() ?? 0,
+                            Y = data["y"]?.ToObject<int>() ?? 0,
+                            Gravity = data["gravity"]?.ToString() ?? "TOP_LEFT",
+                            ClickThrough = data["clickThrough"]?.ToObject<bool>() ?? false,
+                            BackgroundColor = data["backgroundColor"]?.ToString() ?? "#000000",
+                            TextColor = data["textColor"]?.ToString() ?? "#FFFFFF",
+                            BorderColor = data["borderColor"]?.ToString() ?? "#000000",
+                            BorderWidth = data["borderWidth"]?.ToObject<int>() ?? 0,
+                            FontSize = data["fontSize"]?.ToObject<int>() ?? 24,
+                            Opacity = data["opacity"]?.ToObject<double>() ?? 0.9,
+                        };
+                        await SendOverlayCommand(PipeMessage.MessageTypes.ShowSvgOverlay, svgData);
                         await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ok" });
                         break;
                     }
 
                 case "close":
-                    await SendOverlayCommand(PipeMessage.MessageTypes.HideOverlay);
+                    await SendOverlayCommand(PipeMessage.MessageTypes.HideSvgOverlay);
                     await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ok" });
                     break;
 
-                case "getDisplayInfo":
+                case "getdisplayinfo":
                     {
                         var screen = System.Windows.Forms.Screen.PrimaryScreen;
                         await SendMessage(new JObject
@@ -1216,6 +1305,15 @@ namespace WindowsRemoteTools
                         _overlayWindow?.ShowPicture(picturePath);
                     }
                     break;
+
+                case PipeMessage.MessageTypes.ShowSvgOverlay:
+                    if (data is SvgOverlayData svgOverlayData)
+                        _overlayWindow?.ShowSvgOverlay(svgOverlayData);
+                    break;
+
+                case PipeMessage.MessageTypes.HideSvgOverlay:
+                    _overlayWindow?.HideSvgOverlay();
+                    break;
             }
         }
 
@@ -1542,6 +1640,7 @@ namespace WindowsRemoteTools
         public void Dispose()
         {
             Stop();
+            _audioGroupManager.Dispose();
             _connectionCts?.Dispose();
             _webSocket?.Dispose();
         }

@@ -25,6 +25,8 @@ namespace WindowsRemoteTools
             public const string ShowBlockingScreen = "show_blocking_screen";
             public const string ShowPicture = "show_picture";
             public const string ShowLockedScreen = "show_locked_screen";
+            public const string ShowSvgOverlay = "show_svg_overlay";
+            public const string HideSvgOverlay = "hide_svg_overlay";
             public const string Shutdown = "shutdown";
 
             // UI → Service Commands
@@ -67,6 +69,54 @@ namespace WindowsRemoteTools
 
         [JsonProperty("password_hash")]
         public string PasswordHash { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Data for SVG/positioned overlay display commands
+    /// </summary>
+    public class SvgOverlayData
+    {
+        [JsonProperty("svg")]
+        public string Svg { get; set; } = "";
+
+        [JsonProperty("text")]
+        public string Text { get; set; } = "";
+
+        [JsonProperty("width")]
+        public int Width { get; set; } = 300;
+
+        [JsonProperty("height")]
+        public int Height { get; set; } = 100;
+
+        [JsonProperty("x")]
+        public int X { get; set; } = 0;
+
+        [JsonProperty("y")]
+        public int Y { get; set; } = 0;
+
+        [JsonProperty("gravity")]
+        public string Gravity { get; set; } = "TOP_LEFT";
+
+        [JsonProperty("clickThrough")]
+        public bool ClickThrough { get; set; } = false;
+
+        [JsonProperty("backgroundColor")]
+        public string BackgroundColor { get; set; } = "#000000";
+
+        [JsonProperty("textColor")]
+        public string TextColor { get; set; } = "#FFFFFF";
+
+        [JsonProperty("borderColor")]
+        public string BorderColor { get; set; } = "#000000";
+
+        [JsonProperty("borderWidth")]
+        public int BorderWidth { get; set; } = 0;
+
+        [JsonProperty("fontSize")]
+        public int FontSize { get; set; } = 24;
+
+        [JsonProperty("opacity")]
+        public double Opacity { get; set; } = 0.9;
     }
 
     /// <summary>
