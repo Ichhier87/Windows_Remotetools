@@ -1,12 +1,18 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Net.Security;
 using System.Net.WebSockets;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
+using Microsoft.Win32;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -25,7 +31,32 @@ namespace WindowsRemoteTools
         private readonly OverlayWindow? _overlayWindow;
         private readonly ServicePipeServer? _pipeServer;
         private readonly AudioGroupManager _audioGroupManager;
+        private readonly ConcurrentDictionary<string, UploadSession> _uploadSessions = new();
+        private bool _displayEventsActive;
+        private bool _batteryEventsActive;
+        private readonly object _eventSubLock = new object();
         private ClientWebSocket? _webSocket;
+
+        // Media key P/Invoke for Spotify/media control
+        [DllImport("user32.dll")] private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+        private const byte VK_MEDIA_NEXT_TRACK = 0xB0;
+        private const byte VK_MEDIA_PREV_TRACK = 0xB1;
+        private const byte VK_MEDIA_STOP       = 0xB2;
+        private const byte VK_MEDIA_PLAY_PAUSE = 0xB3;
+
+        private static void SendMediaKey(byte vk)
+        {
+            keybd_event(vk, 0, 0, UIntPtr.Zero);
+            keybd_event(vk, 0, 0x0002 /*KEYUP*/, UIntPtr.Zero);
+        }
+
+        private class UploadSession
+        {
+            public string Filename { get; set; } = "";
+            public string FileType { get; set; } = "";
+            public int TotalChunks { get; set; }
+            public SortedDictionary<int, byte[]> Chunks { get; } = new();
+        }
         private CancellationTokenSource? _connectionCts;
         private Task? _connectionTask;
         private bool _running;
@@ -394,6 +425,38 @@ namespace WindowsRemoteTools
                             _audioGroupManager.OnIceCandidate(fromPeer, candidate);
                         break;
                     }
+
+                // Spotify / media control
+                case "SPOTIFY":
+                    await HandleSpotifyOperation(data);
+                    break;
+
+                // Camera streaming (not supported on PC)
+                case "CAMERA_STREAM":
+                    await SendNotSupportedResponse(data["UUID"]?.ToString(), messageType);
+                    break;
+
+                // Proactive event subscriptions
+                case "DISPLAY_EVENTS_REQUEST":
+                    await HandleDisplayEventsRequest(data);
+                    break;
+
+                case "BATTERY_EVENTS_REQUEST":
+                    await HandleBatteryEventsRequest(data);
+                    break;
+
+                // Chunked file upload
+                case "UPLOAD_START":
+                    await HandleUploadStart(data);
+                    break;
+
+                case "UPLOAD_CHUNK":
+                    await HandleUploadChunk(data);
+                    break;
+
+                case "UPLOAD_END":
+                    await HandleUploadEnd(data);
+                    break;
 
                 default:
                     Console.WriteLine($"Unknown server message type: {messageType}");
@@ -930,6 +993,224 @@ namespace WindowsRemoteTools
                 default:
                     await SendNotSupportedResponse(uuid, $"SVG_OVERLAY.{operation}");
                     break;
+            }
+        }
+
+        // ── Spotify / media control ───────────────────────────────────────────
+
+        private async Task HandleSpotifyOperation(JObject data)
+        {
+            var op = data["OP"]?.ToString()?.ToLowerInvariant();
+            var uuid = data["UUID"]?.ToString();
+
+            Console.WriteLine($"Received SPOTIFY operation: {op}");
+
+            switch (op)
+            {
+                case "play":
+                case "pause":
+                case "playpause":
+                    SendMediaKey(VK_MEDIA_PLAY_PAUSE);
+                    await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ok" });
+                    break;
+
+                case "stop":
+                    SendMediaKey(VK_MEDIA_STOP);
+                    await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ok" });
+                    break;
+
+                case "next":
+                    SendMediaKey(VK_MEDIA_NEXT_TRACK);
+                    await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ok" });
+                    break;
+
+                case "previous":
+                    SendMediaKey(VK_MEDIA_PREV_TRACK);
+                    await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ok" });
+                    break;
+
+                default:
+                    await SendNotSupportedResponse(uuid, $"SPOTIFY.{op}");
+                    break;
+            }
+        }
+
+        // ── Display events ────────────────────────────────────────────────────
+
+        private async Task HandleDisplayEventsRequest(JObject data)
+        {
+            var uuid = data["UUID"]?.ToString();
+            Console.WriteLine("[DisplayEvents] Subscribing to display events");
+
+            lock (_eventSubLock)
+            {
+                if (!_displayEventsActive)
+                {
+                    _displayEventsActive = true;
+                    SystemEvents.PowerModeChanged += OnPowerModeChangedForDisplay;
+                }
+            }
+
+            // Send current state immediately
+            await SendDisplayEvent(uuid);
+        }
+
+        private async void OnPowerModeChangedForDisplay(object sender, PowerModeChangedEventArgs e)
+        {
+            if (e.Mode == PowerModes.Resume)
+                await SendDisplayEvent(null);
+            else if (e.Mode == PowerModes.Suspend)
+                await SendMessage(new JObject
+                {
+                    ["type"] = "DISPLAY_EVENTS",
+                    ["event"] = "OFF",
+                    ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                });
+        }
+
+        private async Task SendDisplayEvent(string? uuid)
+        {
+            var brightness = _displayController.GetBrightness();
+            var msg = new JObject
+            {
+                ["type"] = "DISPLAY_EVENTS",
+                ["event"] = "ON",
+                ["brightness"] = brightness,
+                ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+            if (uuid != null) msg["UUID"] = uuid;
+            await SendMessage(msg);
+        }
+
+        // ── Battery events ────────────────────────────────────────────────────
+
+        private async Task HandleBatteryEventsRequest(JObject data)
+        {
+            var uuid = data["UUID"]?.ToString();
+            Console.WriteLine("[BatteryEvents] Subscribing to battery events");
+
+            lock (_eventSubLock)
+            {
+                if (!_batteryEventsActive)
+                {
+                    _batteryEventsActive = true;
+                    SystemEvents.PowerModeChanged += OnPowerModeChangedForBattery;
+                }
+            }
+
+            // Send current state immediately
+            await SendBatteryEvent(uuid);
+        }
+
+        private async void OnPowerModeChangedForBattery(object sender, PowerModeChangedEventArgs e)
+        {
+            await SendBatteryEvent(null);
+        }
+
+        private async Task SendBatteryEvent(string? uuid)
+        {
+            var ps = SystemInformation.PowerStatus;
+            int level = ps.BatteryLifePercent >= 0 && ps.BatteryLifePercent <= 1.0f
+                ? (int)(ps.BatteryLifePercent * 100)
+                : -1;
+            bool charging = ps.PowerLineStatus == PowerLineStatus.Online;
+
+            var msg = new JObject
+            {
+                ["type"] = "BATTERY_EVENTS",
+                ["level"] = level,
+                ["charging"] = charging,
+                ["temperature"] = 0,
+                ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+            if (uuid != null) msg["UUID"] = uuid;
+            await SendMessage(msg);
+        }
+
+        // ── Chunked file upload ───────────────────────────────────────────────
+
+        private async Task HandleUploadStart(JObject data)
+        {
+            var uuid = data["UUID"]?.ToString() ?? "";
+            var filename = data["FILENAME"]?.ToString() ?? "";
+            var fileType = data["FILETYPE"]?.ToString() ?? "";
+            var totalChunks = data["TOTAL_CHUNKS"]?.ToObject<int>() ?? 1;
+
+            Console.WriteLine($"[Upload] Start: {filename} ({fileType}), {totalChunks} chunks, UUID={uuid}");
+
+            _uploadSessions[uuid] = new UploadSession
+            {
+                Filename = filename,
+                FileType = fileType,
+                TotalChunks = totalChunks
+            };
+
+            await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "ready" });
+        }
+
+        private async Task HandleUploadChunk(JObject data)
+        {
+            var uuid = data["UUID"]?.ToString() ?? "";
+            var index = data["INDEX"]?.ToObject<int>() ?? 0;
+            var b64 = data["DATA"]?.ToString() ?? "";
+
+            if (_uploadSessions.TryGetValue(uuid, out var session))
+            {
+                try
+                {
+                    session.Chunks[index] = Convert.FromBase64String(b64);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Upload] Chunk {index} decode error: {ex.Message}");
+                }
+            }
+
+            await SendMessage(new JObject { ["UUID"] = uuid, ["index"] = index });
+        }
+
+        private async Task HandleUploadEnd(JObject data)
+        {
+            var uuid = data["UUID"]?.ToString() ?? "";
+
+            if (!_uploadSessions.TryRemove(uuid, out var session))
+            {
+                await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "error", ["message"] = "No upload session found" });
+                return;
+            }
+
+            try
+            {
+                // Assemble chunks in order
+                var allBytes = session.Chunks
+                    .OrderBy(kv => kv.Key)
+                    .SelectMany(kv => kv.Value)
+                    .ToArray();
+
+                var fileType = session.FileType?.ToLowerInvariant();
+                bool saved;
+
+                if (fileType == "audio" || fileType == "sound")
+                    saved = _audioController.SaveAudio(session.Filename, allBytes);
+                else if (fileType == "picture" || fileType == "image")
+                    saved = _pictureController.SavePicture(session.Filename, allBytes);
+                else
+                {
+                    // Generic fallback: save to downloads folder
+                    var downloads = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "Downloads", session.Filename);
+                    File.WriteAllBytes(downloads, allBytes);
+                    saved = true;
+                }
+
+                Console.WriteLine($"[Upload] Complete: {session.Filename} ({allBytes.Length} bytes)");
+                await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = saved ? "ok" : "error" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Upload] Assembly failed: {ex.Message}");
+                await SendMessage(new JObject { ["UUID"] = uuid, ["status"] = "error", ["message"] = ex.Message });
             }
         }
 
@@ -1641,6 +1922,13 @@ namespace WindowsRemoteTools
         {
             Stop();
             _audioGroupManager.Dispose();
+            lock (_eventSubLock)
+            {
+                if (_displayEventsActive)
+                    SystemEvents.PowerModeChanged -= OnPowerModeChangedForDisplay;
+                if (_batteryEventsActive)
+                    SystemEvents.PowerModeChanged -= OnPowerModeChangedForBattery;
+            }
             _connectionCts?.Dispose();
             _webSocket?.Dispose();
         }
