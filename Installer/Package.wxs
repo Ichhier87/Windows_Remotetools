@@ -69,7 +69,7 @@
 
     <!-- Voraussetzung: .NET 8.0 Runtime (x64) -->
     <Launch
-      Condition="DOTNET8DESKTOP OR DOTNET8DESKTOP_B OR DOTNETINSTALLED"
+      Condition="DOTNET8DESKTOP OR DOTNET8DESKTOP_B OR DOTNETINSTALLED OR Installed"
       Message=".NET 8 Runtime (x64) wird benoetigt.&#13;&#10;Download: https://dotnet.microsoft.com/download/dotnet/8.0" />
 
     <!-- ================================================================
