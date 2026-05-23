@@ -24,7 +24,7 @@
   <Package
     Name="Windows Remote Tools"
     Manufacturer="Remote Tools"
-    Version="1.0.0"
+    Version="$(var.ProductVersion)"
     UpgradeCode="{4B7E9A2C-1D3F-4E5B-8C7A-9D0E1F2A3B4C}"
     Language="1033"
     Scope="perMachine">
@@ -71,6 +71,28 @@
     <Launch
       Condition="DOTNET8DESKTOP OR DOTNET8DESKTOP_B OR DOTNETINSTALLED OR Installed"
       Message=".NET 8 Runtime (x64) wird benoetigt.&#13;&#10;Download: https://dotnet.microsoft.com/download/dotnet/8.0" />
+
+    <!-- ================================================================
+         LAUFENDE PROZESSE BEENDEN VOR INSTALLATION
+         CloseApplication beendet den UI-Prozess (kein Dienst, daher manuell).
+         Der Dienst wird ueber ServiceControl gestoppt (Stop="both").
+         TerminateProcess="yes" killt den Prozess falls er nicht reagiert.
+         ================================================================ -->
+    <!-- Service-Prozess beenden (falls als Benutzer-Prozess gestartet oder falls SCM zu langsam ist) -->
+    <util:CloseApplication
+      Id="CloseServiceProcess"
+      Target="WindowsRemoteTools.exe"
+      CloseMessage="yes"
+      RebootPrompt="no"
+      TerminateProcess="0" />
+
+    <!-- UI-Prozess beenden -->
+    <util:CloseApplication
+      Id="CloseUIProcess"
+      Target="WindowsRemoteToolsUI.exe"
+      CloseMessage="yes"
+      RebootPrompt="no"
+      TerminateProcess="0" />
 
     <!-- ================================================================
          UI
@@ -181,6 +203,64 @@
     <Component Id="cmp_UIRuntimeConfig" Directory="INSTALLDIR">
       <File Id="fil_UIRuntimeConfig"
             Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\WindowsRemoteToolsUI.runtimeconfig.json"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- ================================================================
+         KOMPONENTEN - SIPSORCERY
+         ================================================================ -->
+
+    <Component Id="cmp_SIPSorcery" Directory="INSTALLDIR">
+      <File Id="fil_SIPSorcery"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\SIPSorcery.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_SIPSorceryMedia" Directory="INSTALLDIR">
+      <File Id="fil_SIPSorceryMedia"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\SIPSorceryMedia.Abstractions.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_BouncyCastle" Directory="INSTALLDIR">
+      <File Id="fil_BouncyCastle"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\BouncyCastle.Cryptography.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_Concentus" Directory="INSTALLDIR">
+      <File Id="fil_Concentus"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\Concentus.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_DnsClient" Directory="INSTALLDIR">
+      <File Id="fil_DnsClient"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\DnsClient.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_WebsocketSharp" Directory="INSTALLDIR">
+      <File Id="fil_WebsocketSharp"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\websocket-sharp.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_MsExtDI" Directory="INSTALLDIR">
+      <File Id="fil_MsExtDI"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\Microsoft.Extensions.DependencyInjection.Abstractions.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_MsExtLogging" Directory="INSTALLDIR">
+      <File Id="fil_MsExtLogging"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\Microsoft.Extensions.Logging.Abstractions.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_SysDiagSource" Directory="INSTALLDIR">
+      <File Id="fil_SysDiagSource"
+            Source="..\WindowsRemoteTools\bin\Release\net8.0-windows\System.Diagnostics.DiagnosticSource.dll"
             KeyPath="yes" />
     </Component>
 
@@ -300,10 +380,19 @@
          Tipp: config.json vor dem Upgrade sichern.
          ================================================================ -->
 
-    <Component Id="cmp_Config" Directory="INSTALLDIR" NeverOverwrite="yes">
+    <!-- config.json: nur bei Erstinstallation anlegen, nie ueberschreiben, nie loeschen -->
+    <Component Id="cmp_Config" Directory="INSTALLDIR" NeverOverwrite="yes" Permanent="yes">
       <File Id="fil_Config"
             Source="config.default.json"
             Name="config.json"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- config.default.json: immer aktuell halten (Referenz / Reset-Vorlage) -->
+    <Component Id="cmp_ConfigDefault" Directory="INSTALLDIR">
+      <File Id="fil_ConfigDefault"
+            Source="config.default.json"
+            Name="config.default.json"
             KeyPath="yes" />
     </Component>
 
@@ -326,6 +415,15 @@
         Description="config.json im Editor oeffnen"
         Target="[SystemFolder]notepad.exe"
         Arguments="[INSTALLDIR]config.json"
+        Directory="dir_StartMenu"
+        WorkingDirectory="INSTALLDIR" />
+
+      <Shortcut
+        Id="sc_ConfigDefault"
+        Name="Standardkonfiguration (Vorlage)"
+        Description="config.default.json im Editor oeffnen"
+        Target="[SystemFolder]notepad.exe"
+        Arguments="[INSTALLDIR]config.default.json"
         Directory="dir_StartMenu"
         WorkingDirectory="INSTALLDIR" />
 
@@ -355,6 +453,16 @@
       <ComponentRef Id="cmp_UIDll" />
       <ComponentRef Id="cmp_UIDepsJson" />
       <ComponentRef Id="cmp_UIRuntimeConfig" />
+      <!-- SIPSorcery -->
+      <ComponentRef Id="cmp_SIPSorcery" />
+      <ComponentRef Id="cmp_SIPSorceryMedia" />
+      <ComponentRef Id="cmp_BouncyCastle" />
+      <ComponentRef Id="cmp_Concentus" />
+      <ComponentRef Id="cmp_DnsClient" />
+      <ComponentRef Id="cmp_WebsocketSharp" />
+      <ComponentRef Id="cmp_MsExtDI" />
+      <ComponentRef Id="cmp_MsExtLogging" />
+      <ComponentRef Id="cmp_SysDiagSource" />
       <!-- NAudio -->
       <ComponentRef Id="cmp_NAudio" />
       <ComponentRef Id="cmp_NAudio_Asio" />
@@ -376,6 +484,7 @@
       <ComponentRef Id="cmp_rt_SvcCtrl" />
       <!-- Config + Startmenue -->
       <ComponentRef Id="cmp_Config" />
+      <ComponentRef Id="cmp_ConfigDefault" />
       <ComponentRef Id="cmp_Shortcuts" />
     </Feature>
 

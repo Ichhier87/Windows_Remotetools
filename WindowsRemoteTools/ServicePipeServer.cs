@@ -1,6 +1,9 @@
 using System;
 using System.IO;
 using System.IO.Pipes;
+using System.IO.Pipes.AccessControl;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,13 +41,27 @@ namespace WindowsRemoteTools
             {
                 try
                 {
-                    // Create new pipe server
-                    _pipeServer = new NamedPipeServerStream(
+                    // Create new pipe server with ACL allowing all authenticated users to connect.
+                    // Required because the service runs as LocalSystem (Session 0) and the UI
+                    // process runs as a regular user (Session 1+).
+                    var security = new PipeSecurity();
+                    security.AddAccessRule(new PipeAccessRule(
+                        new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
+                        PipeAccessRights.ReadWrite,
+                        AccessControlType.Allow));
+                    security.AddAccessRule(new PipeAccessRule(
+                        new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                        PipeAccessRights.FullControl,
+                        AccessControlType.Allow));
+
+                    _pipeServer = NamedPipeServerStreamAcl.Create(
                         PipeName,
                         PipeDirection.InOut,
                         1,
                         PipeTransmissionMode.Byte,
-                        PipeOptions.Asynchronous);
+                        PipeOptions.Asynchronous,
+                        0, 0,
+                        security);
 
                     Console.WriteLine("ServicePipeServer: Waiting for client connection...");
 

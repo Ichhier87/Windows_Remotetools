@@ -16,12 +16,20 @@
     <!-- Platform must be x64 to match .NET 8 x64 binaries -->
     <Platform>x64</Platform>
     <InstallerPlatform>x64</InstallerPlatform>
+    <!-- Pass -Version to Build-Installer.ps1 to set package and file version -->
+    <DefineConstants>ProductVersion=$(Version)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="WixToolset.UI.wixext"   Version="4.0.5" />
     <PackageReference Include="WixToolset.Util.wixext" Version="4.0.5" />
     <PackageReference Include="WixToolset.NetFx.wixext" Version="4.0.5" />
+  </ItemGroup>
+
+  <!-- Sicherstellt, dass C#-Projekte vor dem WiX-Build fertig sind -->
+  <ItemGroup>
+    <ProjectReference Include="..\WindowsRemoteTools\WindowsRemoteTools.csproj" />
+    <ProjectReference Include="..\WindowsRemoteToolsUI\WindowsRemoteToolsUI.csproj" />
   </ItemGroup>
 
 </Project>

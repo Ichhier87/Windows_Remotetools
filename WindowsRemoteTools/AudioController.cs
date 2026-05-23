@@ -132,17 +132,33 @@ namespace WindowsRemoteTools
                     {
                         _waveOut.PlaybackStopped += (s, e) =>
                         {
-                            if (_isLooping && _isPlaying)
+                            if (!_isLooping || !_isPlaying) return;
+
+                            // Restart on a thread-pool thread to avoid re-entrancy on
+                            // NAudio's audio callback thread and to catch exceptions safely.
+                            Task.Run(() =>
                             {
-                                lock (_playbackLock)
+                                try
                                 {
-                                    if (_audioFileReader != null && _waveOut != null)
+                                    lock (_playbackLock)
                                     {
-                                        _audioFileReader.Position = 0;
-                                        _waveOut.Play();
+                                        if (_audioFileReader != null && _waveOut != null && _isLooping && _isPlaying)
+                                        {
+                                            _audioFileReader.Position = 0;
+                                            _waveOut.Play();
+                                        }
                                     }
                                 }
-                            }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Error restarting audio loop: {ex.Message}");
+                                    lock (_playbackLock)
+                                    {
+                                        _isLooping = false;
+                                        _isPlaying = false;
+                                    }
+                                }
+                            });
                         };
                     }
                     else
@@ -176,27 +192,30 @@ namespace WindowsRemoteTools
         /// </summary>
         public void Stop()
         {
+            IWavePlayer? waveToStop;
+            AudioFileReader? readerToDispose;
+
             lock (_playbackLock)
             {
                 _isLooping = false;
                 _isPlaying = false;
-
-                if (_waveOut != null)
-                {
-                    _waveOut.Stop();
-                    _waveOut.Dispose();
-                    _waveOut = null;
-                }
-
-                if (_audioFileReader != null)
-                {
-                    _audioFileReader.Dispose();
-                    _audioFileReader = null;
-                }
-
                 _currentlyPlayingFile = null;
-                Console.WriteLine("Audio playback stopped");
+
+                waveToStop = _waveOut;
+                _waveOut = null;
+
+                readerToDispose = _audioFileReader;
+                _audioFileReader = null;
             }
+
+            // Lock released before Stop/Dispose to prevent deadlock:
+            // waveOutClose() can block waiting for PlaybackStopped callbacks,
+            // which in turn try to acquire _playbackLock.
+            waveToStop?.Stop();
+            waveToStop?.Dispose();
+            readerToDispose?.Dispose();
+
+            Console.WriteLine("Audio playback stopped");
         }
 
         /// <summary>

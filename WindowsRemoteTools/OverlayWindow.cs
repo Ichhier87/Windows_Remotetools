@@ -172,25 +172,21 @@ namespace WindowsRemoteTools
 
         public void HideSvgOverlay()
         {
+            Form? f;
             lock (_svgLock)
             {
-                if (_svgForm != null)
-                {
-                    try
-                    {
-                        var f = _svgForm;
-                        if (f.InvokeRequired)
-                            f.Invoke(new Action(() => { f.Close(); f.Dispose(); }));
-                        else
-                        { f.Close(); f.Dispose(); }
-                    }
-                    catch { }
-                    finally
-                    {
-                        _svgForm = null;
-                    }
-                }
+                f = _svgForm;
+                _svgForm = null;
             }
+            if (f == null) return;
+            try
+            {
+                if (f.InvokeRequired)
+                    f.Invoke(new Action(() => { f.Close(); f.Dispose(); }));
+                else
+                { f.Close(); f.Dispose(); }
+            }
+            catch { }
         }
 
         public void ShowBlockingScreen(string message = "Screen Locked")

@@ -33,14 +33,22 @@ namespace WindowsRemoteTools
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error initializing audio: {ex.Message}");
-                throw;
+                // Audio device may not be available in Session 0 (service context) — run without it
+                Console.WriteLine($"Audio device not available (service context?): {ex.Message}");
             }
         }
 
         public float GetVolume()
         {
-            return _device?.AudioEndpointVolume.MasterVolumeLevelScalar ?? 0f;
+            try
+            {
+                return _device?.AudioEndpointVolume.MasterVolumeLevelScalar ?? 0f;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"GetVolume COM error: {ex.Message}");
+                return 0f;
+            }
         }
 
         public int GetVolumePercent()
@@ -130,7 +138,18 @@ namespace WindowsRemoteTools
 
             _monitoring = false;
             _monitoringCts?.Cancel();
-            _monitoringTask?.Wait(TimeSpan.FromSeconds(2));
+            try
+            {
+                _monitoringTask?.Wait(TimeSpan.FromSeconds(2));
+            }
+            catch (AggregateException ex)
+            {
+                Console.WriteLine($"Volume monitoring stopped with errors: {ex.InnerException?.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"StopMonitoring error: {ex.Message}");
+            }
             Console.WriteLine("Volume monitoring stopped");
         }
 
@@ -138,8 +157,23 @@ namespace WindowsRemoteTools
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                EnforceMaxVolumeOnce();
-                await Task.Delay(TimeSpan.FromSeconds(_config.VolumeCheckInterval), cancellationToken);
+                try
+                {
+                    EnforceMaxVolumeOnce();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Volume monitoring error: {ex.Message}");
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_config.VolumeCheckInterval), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
 

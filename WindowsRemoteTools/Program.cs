@@ -20,6 +20,8 @@ namespace WindowsRemoteTools
         [STAThread]
         static void Main(string[] args)
         {
+            FileLogger.Init();
+
             // Check if running as service
             bool runAsService = args.Contains("--service", StringComparer.OrdinalIgnoreCase);
             bool runAsConsole = args.Contains("--console", StringComparer.OrdinalIgnoreCase);

@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>WindowsRemoteToolsUI</AssemblyName>
     <RootNamespace>WindowsRemoteToolsUI</RootNamespace>
+    <FileVersion>$(Version)</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

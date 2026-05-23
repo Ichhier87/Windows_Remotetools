@@ -10,6 +10,13 @@ namespace WindowsRemoteToolsUI
         [STAThread]
         static void Main()
         {
+            // Single-instance guard: if another instance is already running, exit immediately.
+            // This prevents a second (manually started) instance from conflicting with the
+            // watchdog-started instance.
+            using var mutex = new System.Threading.Mutex(true, "WindowsRemoteToolsUI_SingleInstance", out bool isNewInstance);
+            if (!isNewInstance)
+                return;
+
             ApplicationConfiguration.Initialize();
 
             var app = new UIApplication();
@@ -48,6 +55,19 @@ namespace WindowsRemoteToolsUI
 
             // Connect to service
             Task.Run(async () => await ConnectToService());
+
+            // Retry tray icon visibility: Windows shell may not be ready when started at boot
+            // via the service watchdog. Re-show the icon every 3 s until it sticks (max 10 retries).
+            int retryCount = 0;
+            var iconRetryTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            iconRetryTimer.Tick += (s, e) =>
+            {
+                _trayIcon.Visible = false;
+                _trayIcon.Visible = true;
+                if (++retryCount >= 10)
+                    iconRetryTimer.Stop();
+            };
+            iconRetryTimer.Start();
         }
 
         private async Task ConnectToService()
@@ -107,6 +127,25 @@ namespace WindowsRemoteToolsUI
                     }
                     break;
 
+                case PipeMessage.MessageTypes.ShowSvgOverlay:
+                    if (message.Data is Newtonsoft.Json.Linq.JObject svgJo)
+                    {
+                        var svgData = svgJo.ToObject<SvgOverlayData>();
+                        if (svgData != null)
+                            _overlayWindow.ShowSvgOverlay(svgData);
+                    }
+                    break;
+
+                case PipeMessage.MessageTypes.HideSvgOverlay:
+                    _overlayWindow.HideSvgOverlay();
+                    break;
+
+                case PipeMessage.MessageTypes.ShowPicture:
+                    var picPath = message.Data?.ToString();
+                    if (!string.IsNullOrEmpty(picPath))
+                        _overlayWindow.ShowPicture(picPath);
+                    break;
+
                 case PipeMessage.MessageTypes.Shutdown:
                     Shutdown();
                     break;
@@ -129,7 +168,7 @@ namespace WindowsRemoteToolsUI
                     if (!string.IsNullOrEmpty(overlayData.TextColor))
                         txtColor = ColorTranslator.FromHtml(overlayData.TextColor);
 
-                    _overlayWindow.Show(overlayData.Message, bgColor, txtColor, overlayData.Opacity);
+                    _overlayWindow.ShowAsync(overlayData.Message, bgColor, txtColor, overlayData.Opacity);
                 }
             }
         }

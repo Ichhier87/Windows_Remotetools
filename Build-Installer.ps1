@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Baut Windows Remote Tools und erstellt anschließend das MSI-Installationspaket.
@@ -69,7 +69,7 @@ Assert-Command "dotnet"
 if (-not $SkipBuild) {
     Write-Step ".NET-Projekte in Release bauen..."
 
-    & dotnet build $SolutionFile -c Release --nologo
+    & dotnet build $SolutionFile -c Release --nologo /p:Version=$Version
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ✗ .NET Build fehlgeschlagen (Exit $LASTEXITCODE)" -ForegroundColor Red
         exit $LASTEXITCODE
