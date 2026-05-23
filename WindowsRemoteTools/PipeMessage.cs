@@ -27,6 +27,8 @@ namespace WindowsRemoteTools
             public const string ShowLockedScreen = "show_locked_screen";
             public const string ShowSvgOverlay = "show_svg_overlay";
             public const string HideSvgOverlay = "hide_svg_overlay";
+            public const string ShowWebOverlay = "show_web_overlay";
+            public const string HideWebOverlay = "hide_web_overlay";
             public const string Shutdown = "shutdown";
 
             // UI → Service Commands
@@ -117,6 +119,19 @@ namespace WindowsRemoteTools
 
         [JsonProperty("opacity")]
         public double Opacity { get; set; } = 0.9;
+    }
+
+    /// <summary>
+    /// Data for opening a URL inside a WebView-based overlay (vocable trainer, etc.).
+    /// Mirrors the Android DEVICE_MESSAGE / OP=open payload.
+    /// </summary>
+    public class WebOverlayData
+    {
+        [JsonProperty("url")]
+        public string Url { get; set; } = "";
+
+        [JsonProperty("can_close")]
+        public bool CanClose { get; set; } = true;
     }
 
     /// <summary>

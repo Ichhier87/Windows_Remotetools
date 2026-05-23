@@ -347,6 +347,10 @@ namespace WindowsRemoteTools
                     await HandleSVGOverlayOperation(data);
                     break;
 
+                case "DEVICE_MESSAGE":
+                    await HandleDeviceMessageOperation(data);
+                    break;
+
                 case "SCREENSHOT_REQUEST":
                 case "SCREENSHOT_PERMISSION_REQUEST":
                     await SendNotSupportedResponse(data["UUID"]?.ToString(), messageType);
@@ -996,6 +1000,69 @@ namespace WindowsRemoteTools
             }
         }
 
+        // ── Device message (URL overlay / vocable trainer) ────────────────────
+
+        /// <summary>
+        /// Handles the DEVICE_MESSAGE operation used by CentralServer to push a URL-based
+        /// overlay to the device (vocable trainer, custom info pages, etc.). The actual
+        /// rendering happens in the user-context UI process via the named pipe.
+        /// </summary>
+        private async Task HandleDeviceMessageOperation(JObject data)
+        {
+            var op = data["OP"]?.ToString()?.ToLowerInvariant();
+            var uuid = data["UUID"]?.ToString();
+
+            Console.WriteLine($"Received DEVICE_MESSAGE operation: {op}");
+
+            switch (op)
+            {
+                case "open":
+                    {
+                        var url = data["url"]?.ToString() ?? "";
+                        var canClose = data["can_close"]?.ToObject<bool>() ?? true;
+
+                        if (string.IsNullOrWhiteSpace(url))
+                        {
+                            await SendMessage(new JObject
+                            {
+                                ["UUID"] = uuid,
+                                ["success"] = false,
+                                ["error"] = "url is empty"
+                            });
+                            return;
+                        }
+
+                        await SendOverlayCommand(PipeMessage.MessageTypes.ShowWebOverlay,
+                            new WebOverlayData { Url = url, CanClose = canClose });
+
+                        await SendMessage(new JObject
+                        {
+                            ["UUID"] = uuid,
+                            ["success"] = true
+                        });
+                        break;
+                    }
+
+                case "close":
+                    await SendOverlayCommand(PipeMessage.MessageTypes.HideWebOverlay);
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["success"] = true
+                    });
+                    break;
+
+                default:
+                    await SendMessage(new JObject
+                    {
+                        ["UUID"] = uuid,
+                        ["success"] = false,
+                        ["error"] = $"unknown OP: {op}"
+                    });
+                    break;
+            }
+        }
+
         // ── Spotify / media control ───────────────────────────────────────────
 
         private async Task HandleSpotifyOperation(JObject data)
@@ -1594,6 +1661,15 @@ namespace WindowsRemoteTools
 
                 case PipeMessage.MessageTypes.HideSvgOverlay:
                     _overlayWindow?.HideSvgOverlay();
+                    break;
+
+                case PipeMessage.MessageTypes.ShowWebOverlay:
+                    if (data is WebOverlayData webData)
+                        _overlayWindow?.ShowWebOverlay(webData.Url, webData.CanClose);
+                    break;
+
+                case PipeMessage.MessageTypes.HideWebOverlay:
+                    _overlayWindow?.HideWebOverlay();
                     break;
             }
         }

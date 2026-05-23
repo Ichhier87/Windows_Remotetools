@@ -110,6 +110,10 @@
               <Directory Id="dir_net8" Name="net8.0" />
             </Directory>
           </Directory>
+          <!-- runtimes\win-x64\native\ fuer WebView2Loader.dll -->
+          <Directory Id="dir_win_x64" Name="win-x64">
+            <Directory Id="dir_net8_x64_native" Name="native" />
+          </Directory>
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -203,6 +207,30 @@
     <Component Id="cmp_UIRuntimeConfig" Directory="INSTALLDIR">
       <File Id="fil_UIRuntimeConfig"
             Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\WindowsRemoteToolsUI.runtimeconfig.json"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- ================================================================
+         KOMPONENTEN - WEBVIEW2 (fuer Vokabeltrainer-Overlay)
+         WebView2-Loader liegt arch-spezifisch unter runtimes\win-x64\native\,
+         die managed DLLs flach neben der EXE.
+         ================================================================ -->
+
+    <Component Id="cmp_WebView2Core" Directory="INSTALLDIR">
+      <File Id="fil_WebView2Core"
+            Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\Microsoft.Web.WebView2.Core.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_WebView2WinForms" Directory="INSTALLDIR">
+      <File Id="fil_WebView2WinForms"
+            Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\Microsoft.Web.WebView2.WinForms.dll"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="cmp_WebView2LoaderNative" Directory="dir_net8_x64_native">
+      <File Id="fil_WebView2LoaderNative"
+            Source="..\WindowsRemoteToolsUI\bin\Release\net8.0-windows\runtimes\win-x64\native\WebView2Loader.dll"
             KeyPath="yes" />
     </Component>
 
@@ -453,6 +481,10 @@
       <ComponentRef Id="cmp_UIDll" />
       <ComponentRef Id="cmp_UIDepsJson" />
       <ComponentRef Id="cmp_UIRuntimeConfig" />
+      <!-- WebView2 (Vokabeltrainer) -->
+      <ComponentRef Id="cmp_WebView2Core" />
+      <ComponentRef Id="cmp_WebView2WinForms" />
+      <ComponentRef Id="cmp_WebView2LoaderNative" />
       <!-- SIPSorcery -->
       <ComponentRef Id="cmp_SIPSorcery" />
       <ComponentRef Id="cmp_SIPSorceryMedia" />

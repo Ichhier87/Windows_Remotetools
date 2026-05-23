@@ -51,6 +51,14 @@ Copy-Item "$PSScriptRoot\WindowsRemoteTools\bin\Release\net8.0-windows\*" -Desti
 # UI-Dateien (nur die spezifischen UI-Dateien, Rest ist schon dabei)
 Copy-Item "$PSScriptRoot\WindowsRemoteToolsUI\bin\Release\net8.0-windows\WindowsRemoteToolsUI.*" -Destination "$OutputPath\Files\" -Force
 
+# WebView2 managed DLLs (für Vokabeltrainer-Overlay)
+Copy-Item "$PSScriptRoot\WindowsRemoteToolsUI\bin\Release\net8.0-windows\Microsoft.Web.WebView2.*.dll" -Destination "$OutputPath\Files\" -Force -ErrorAction SilentlyContinue
+
+# WebView2 nativer Loader: muss arch-spezifisch unter runtimes\win-x64\native\ liegen
+$nativeDir = "$OutputPath\Files\runtimes\win-x64\native"
+New-Item -Path $nativeDir -ItemType Directory -Force | Out-Null
+Copy-Item "$PSScriptRoot\WindowsRemoteToolsUI\bin\Release\net8.0-windows\runtimes\win-x64\native\WebView2Loader.dll" -Destination $nativeDir -Force -ErrorAction SilentlyContinue
+
 # Entferne unnoetige Dateien
 Remove-Item "$OutputPath\Files\*.pdb" -Force -ErrorAction SilentlyContinue
 Remove-Item "$OutputPath\Files\ref" -Recurse -Force -ErrorAction SilentlyContinue

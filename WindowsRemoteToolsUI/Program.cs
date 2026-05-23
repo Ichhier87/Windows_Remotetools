@@ -29,6 +29,7 @@ namespace WindowsRemoteToolsUI
         private readonly UIPipeClient _pipeClient;
         private readonly OverlayWindow _overlayWindow;
         private readonly NotifyIcon _trayIcon;
+        private WebOverlayForm? _webOverlay;
         private bool _running = true;
 
         public UIApplication()
@@ -140,6 +141,19 @@ namespace WindowsRemoteToolsUI
                     _overlayWindow.HideSvgOverlay();
                     break;
 
+                case PipeMessage.MessageTypes.ShowWebOverlay:
+                    if (message.Data is Newtonsoft.Json.Linq.JObject webJo)
+                    {
+                        var webData = webJo.ToObject<WebOverlayData>();
+                        if (webData != null)
+                            ShowWebOverlay(webData);
+                    }
+                    break;
+
+                case PipeMessage.MessageTypes.HideWebOverlay:
+                    HideWebOverlay();
+                    break;
+
                 case PipeMessage.MessageTypes.ShowPicture:
                     var picPath = message.Data?.ToString();
                     if (!string.IsNullOrEmpty(picPath))
@@ -197,6 +211,51 @@ namespace WindowsRemoteToolsUI
             _overlayWindow.ShowBlockingScreen(msg);
         }
 
+        private void ShowWebOverlay(WebOverlayData data)
+        {
+            // Pipe callbacks run on a worker thread; the form has to be created and
+            // accessed on the WinForms UI thread.
+            void DoShow()
+            {
+                HideWebOverlay();
+                if (string.IsNullOrWhiteSpace(data.Url)) return;
+
+                var form = new WebOverlayForm(data.Url, data.CanClose);
+                _webOverlay = form;
+                form.FormClosed += (_, _) =>
+                {
+                    if (ReferenceEquals(_webOverlay, form))
+                        _webOverlay = null;
+                };
+                form.Show();
+            }
+
+            if (_trayIcon.ContextMenuStrip is { } cms && cms.InvokeRequired)
+                cms.BeginInvoke(new Action(DoShow));
+            else if (Application.OpenForms.Count > 0 && Application.OpenForms[0]!.InvokeRequired)
+                Application.OpenForms[0]!.BeginInvoke(new Action(DoShow));
+            else
+                DoShow();
+        }
+
+        private void HideWebOverlay()
+        {
+            var form = _webOverlay;
+            if (form == null) return;
+
+            void DoClose()
+            {
+                try { form.Close(); form.Dispose(); } catch { }
+            }
+
+            if (form.InvokeRequired)
+                form.BeginInvoke(new Action(DoClose));
+            else
+                DoClose();
+
+            _webOverlay = null;
+        }
+
         private void OnExit(object? sender, EventArgs e)
         {
             Shutdown();
@@ -205,6 +264,7 @@ namespace WindowsRemoteToolsUI
         private void Shutdown()
         {
             _running = false;
+            HideWebOverlay();
             _overlayWindow.Hide();
             _trayIcon.Visible = false;
             _pipeClient.Dispose();

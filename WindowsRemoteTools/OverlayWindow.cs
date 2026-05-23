@@ -194,6 +194,35 @@ namespace WindowsRemoteTools
             ShowAsync(message, Color.Black, Color.Red, 0.95);
         }
 
+        /// <summary>
+        /// GUI-mode fallback for the URL overlay (vocable trainer etc.). The Service-mode
+        /// path renders the URL inside a WebView2 form in the user-context UI process;
+        /// here we don't have WebView2 wired in, so we just hand the URL to the system
+        /// default browser. The real overlay experience is provided by WindowsRemoteToolsUI.
+        /// </summary>
+        public void ShowWebOverlay(string url, bool canClose = true)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return;
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ShowWebOverlay (GUI fallback) failed: {ex.Message}");
+            }
+        }
+
+        public void HideWebOverlay()
+        {
+            // No-op for the GUI-mode browser fallback — we cannot reach back into the
+            // user's browser to close the tab.
+        }
+
         public void ShowLockedScreen(string message, string passwordHash, Action? onUnlocked = null)
         {
             Hide();
