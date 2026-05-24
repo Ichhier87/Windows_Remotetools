@@ -35,6 +35,14 @@ namespace WindowsRemoteTools
         // SSL/TLS settings
         public bool IgnoreSslErrors { get; set; } = true; // For self-signed certificates
 
+        // Auto-update settings — the Service polls this URL for a signed manifest.
+        // Set to empty to disable auto-update. The signature is verified against a
+        // public key compiled into the binary, so this endpoint cannot be used to
+        // push malicious code without also stealing the private signing key.
+        public string UpdateManifestUrl { get; set; } = "https://dennislewin.de/updates/manifest.json";
+        public bool UpdatesEnabled { get; set; } = true;
+        public double UpdateCheckIntervalHours { get; set; } = 6.0;
+
         [JsonIgnore]
         public string WebSocketUrl => $"{(WsUseSSL ? "wss" : "ws")}://{WsHost}:{WsPort}";
 

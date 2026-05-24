@@ -15,6 +15,7 @@ namespace WindowsRemoteTools
         private readonly OverlayWindow? _overlayWindow;
         private readonly ServicePipeServer? _pipeServer;
         private readonly WebSocketClient _webSocketClient;
+        private readonly UpdateChecker _updateChecker;
         private bool _disposed = false;
         private readonly bool _useOverlayDirectly;
 
@@ -43,6 +44,8 @@ namespace WindowsRemoteTools
                 _pipeServer = new ServicePipeServer();
                 _webSocketClient = new WebSocketClient(_config, _volumeController, _displayController, _pictureController, _audioController, null, _pipeServer);
             }
+
+            _updateChecker = new UpdateChecker(_config);
         }
 
         /// <summary>
@@ -67,6 +70,9 @@ namespace WindowsRemoteTools
                 _volumeController.StartMonitoring();
             }
 
+            // Start auto-update checker (no-op if disabled in config or public key not provisioned)
+            _updateChecker.Start();
+
             Console.WriteLine("Remote Tools Core services started successfully");
         }
 
@@ -81,6 +87,7 @@ namespace WindowsRemoteTools
             _volumeController?.StopMonitoring();
             _overlayWindow?.Hide();
             _pipeServer?.Dispose();
+            _updateChecker?.Stop();
 
             Console.WriteLine("Remote Tools Core services stopped");
         }
@@ -144,6 +151,7 @@ namespace WindowsRemoteTools
                     _pictureController?.Dispose();
                     _audioController?.Dispose();
                     _pipeServer?.Dispose();
+                    _updateChecker?.Dispose();
                 }
                 _disposed = true;
             }
