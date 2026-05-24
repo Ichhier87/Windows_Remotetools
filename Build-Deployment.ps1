@@ -2,17 +2,36 @@
 # Erstellt ein Installations-Paket fuer andere Maschinen
 
 param(
-    [string]$OutputPath = "C:\Temp\WindowsRemoteTools-Deployment"
+    [string]$OutputPath = "C:\Temp\WindowsRemoteTools-Deployment",
+    [string]$Version = ""
 )
 
 Write-Host "=== Windows Remote Tools - Deployment Builder ===" -ForegroundColor Cyan
 Write-Host ""
 
+# Resolve version: explicit -Version > VERSION-file > error. Stamping the
+# assemblies is required so the auto-updater knows what version it's running.
+$VersionFile = Join-Path $PSScriptRoot "VERSION"
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    if (Test-Path $VersionFile) {
+        $Version = (Get-Content $VersionFile -Raw).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        Write-Host "X Keine Version: weder -Version uebergeben noch lesbare VERSION-Datei vorhanden." -ForegroundColor Red
+        exit 1
+    }
+}
+if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+    Write-Host "X Ungueltige Versionsnummer '$Version' — erwartet X.Y.Z oder X.Y.Z.W" -ForegroundColor Red
+    exit 1
+}
+Write-Host "Version: $Version" -ForegroundColor Cyan
+
 # 1. Kompiliere beide Projekte
 Write-Host "[1/6] Kompiliere Projekte..." -ForegroundColor Yellow
 
 Push-Location "$PSScriptRoot\WindowsRemoteTools"
-dotnet build -c Release
+dotnet build -c Release "-p:Version=$Version"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "X Service-Kompilierung fehlgeschlagen!" -ForegroundColor Red
     Pop-Location
@@ -21,7 +40,7 @@ if ($LASTEXITCODE -ne 0) {
 Pop-Location
 
 Push-Location "$PSScriptRoot\WindowsRemoteToolsUI"
-dotnet build -c Release
+dotnet build -c Release "-p:Version=$Version"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "X UI-Kompilierung fehlgeschlagen!" -ForegroundColor Red
     Pop-Location

@@ -12,16 +12,18 @@
     Überspringt den .NET-Build (nützlich wenn bereits gebaut wurde)
 
 .PARAMETER Version
-    Versions-Nummer für das MSI (Standard: 1.0.0)
+    Versions-Nummer für das MSI. Wenn nicht angegeben, wird die VERSION-Datei im
+    Repo-Root gelesen (single source of truth).
 
 .EXAMPLE
-    .\Build-Installer.ps1
-    .\Build-Installer.ps1 -Version "1.2.3"
+    .\Build-Installer.ps1                    # liest .\VERSION
+    .\Build-Installer.ps1 -Version "1.2.3"   # uebersteuert VERSION-Datei
     .\Build-Installer.ps1 -SkipBuild
 #>
 param(
     [switch]$SkipBuild,
-    [string]$Version = "1.0.0"
+    [switch]$NoOpenPrompt,
+    [string]$Version = ""
 )
 
 Set-StrictMode -Version Latest
@@ -31,6 +33,24 @@ $Root = $PSScriptRoot
 $SolutionFile = Join-Path $Root "WindowsRemoteTools.sln"
 $InstallerProject = Join-Path $Root "Installer\Installer.wixproj"
 $OutputDir = Join-Path $Root "Installer\bin\Release"
+$VersionFile = Join-Path $Root "VERSION"
+
+# Resolve effective version: explicit -Version > VERSION-file > hard fallback.
+# Single source of truth so MSI, deployment package and update manifest stay in sync.
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    if (Test-Path $VersionFile) {
+        $Version = (Get-Content $VersionFile -Raw).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        Write-Host "  ✗ Keine Version: weder -Version uebergeben noch lesbare VERSION-Datei vorhanden." -ForegroundColor Red
+        Write-Host "    Lege $VersionFile mit z.B. '1.0.5' an oder rufe -Version explizit auf." -ForegroundColor Yellow
+        exit 1
+    }
+}
+if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+    Write-Host "  ✗ Ungueltige Versionsnummer '$Version' — erwartet X.Y.Z oder X.Y.Z.W" -ForegroundColor Red
+    exit 1
+}
 
 # ─────────────────────────────────────────────────
 # Hilfsfunktionen
@@ -130,9 +150,11 @@ if ($Msi) {
     Write-Host "  Größe: $([math]::Round($Msi.Length / 1MB, 2)) MB" -ForegroundColor Gray
     Write-Host ""
 
-    $open = Read-Host "  MSI-Datei im Explorer anzeigen? [j/N]"
-    if ($open -match "^[jJyY]") {
-        Start-Process explorer.exe -ArgumentList "/select,`"$($Msi.FullName)`""
+    if (-not $NoOpenPrompt) {
+        $open = Read-Host "  MSI-Datei im Explorer anzeigen? [j/N]"
+        if ($open -match "^[jJyY]") {
+            Start-Process explorer.exe -ArgumentList "/select,`"$($Msi.FullName)`""
+        }
     }
 } else {
     Write-Host "  Kein MSI im Ausgabeordner gefunden: $OutputDir" -ForegroundColor Yellow

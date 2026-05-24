@@ -34,6 +34,7 @@ namespace WindowsRemoteToolsUI
         {
             _url = url;
             _canClose = canClose;
+            Console.WriteLine($"Creating WebOverlayForm for URL: {_url}");
 
             FormBorderStyle = FormBorderStyle.None;
             WindowState = FormWindowState.Maximized;
@@ -52,6 +53,7 @@ namespace WindowsRemoteToolsUI
         {
             try
             {
+                Console.WriteLine("Initializing WebView2 overlay.");
                 _webView = new WebView2 { Dock = DockStyle.Fill };
                 Controls.Add(_webView);
 
@@ -65,12 +67,15 @@ namespace WindowsRemoteToolsUI
                 await _webView.EnsureCoreWebView2Async(env);
 
                 _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
+                _webView.CoreWebView2.NavigationCompleted += (_, e) =>
+                    Console.WriteLine($"WebView2 navigation completed. Success={e.IsSuccess}, Error={e.WebErrorStatus}");
                 _webView.CoreWebView2.Navigate(_url);
+                Console.WriteLine($"WebView2 navigating to: {_url}");
             }
             catch (Exception ex)
             {
                 _initFailed = true;
-                Console.WriteLine($"WebView2 init failed, falling back to default browser: {ex.Message}");
+                Console.WriteLine($"WebView2 init failed, falling back to default browser: {ex}");
                 FallbackToBrowser();
                 // Closing the form schedules disposal on the message loop.
                 BeginInvoke(new Action(Close));
@@ -81,11 +86,12 @@ namespace WindowsRemoteToolsUI
         {
             try
             {
+                Console.WriteLine($"Opening fallback browser for: {_url}");
                 Process.Start(new ProcessStartInfo { FileName = _url, UseShellExecute = true });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Fallback browser launch failed: {ex.Message}");
+                Console.WriteLine($"Fallback browser launch failed: {ex}");
             }
         }
 

@@ -1,7 +1,10 @@
 using System;
 using System.Drawing;
+using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Newtonsoft.Json;
 
 namespace WindowsRemoteToolsUI
 {
@@ -10,30 +13,71 @@ namespace WindowsRemoteToolsUI
         [STAThread]
         static void Main()
         {
+            UIFileLogger.Init();
+            Application.ThreadException += (_, e) => Console.WriteLine($"UI thread exception: {e.Exception}");
+            AppDomain.CurrentDomain.UnhandledException += (_, e) => Console.WriteLine($"UI unhandled exception: {e.ExceptionObject}");
+
+            if (TryRunCommandMode(Environment.GetCommandLineArgs()))
+                return;
+
             // Single-instance guard: if another instance is already running, exit immediately.
             // This prevents a second (manually started) instance from conflicting with the
             // watchdog-started instance.
             using var mutex = new System.Threading.Mutex(true, "WindowsRemoteToolsUI_SingleInstance", out bool isNewInstance);
             if (!isNewInstance)
+            {
+                Console.WriteLine("Another WindowsRemoteToolsUI instance is already running; exiting.");
                 return;
+            }
 
             ApplicationConfiguration.Initialize();
+            Application.Run(new UIApplication());
+        }
 
-            var app = new UIApplication();
-            Application.Run();
+        private static bool TryRunCommandMode(string[] args)
+        {
+            if (args.Length < 3 || !args[1].Equals("--show-web-overlay", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            try
+            {
+                ApplicationConfiguration.Initialize();
+                var json = Encoding.UTF8.GetString(Convert.FromBase64String(args[2]));
+                var data = JsonConvert.DeserializeObject<WebOverlayData>(json);
+                if (data == null || string.IsNullOrWhiteSpace(data.Url))
+                {
+                    Console.WriteLine("Command mode web overlay ignored because payload is empty.");
+                    return true;
+                }
+
+                Console.WriteLine($"Command mode showing web overlay: {data.Url}");
+                Application.Run(new WebOverlayForm(data.Url, data.CanClose));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Command mode failed: {ex}");
+            }
+
+            return true;
         }
     }
 
-    public class UIApplication
+    public class UIApplication : ApplicationContext
     {
         private readonly UIPipeClient _pipeClient;
         private readonly OverlayWindow _overlayWindow;
         private readonly NotifyIcon _trayIcon;
+        private readonly Control _uiInvoker;
         private WebOverlayForm? _webOverlay;
         private bool _running = true;
 
         public UIApplication()
         {
+            Console.WriteLine("WindowsRemoteToolsUI starting application context.");
+
+            _uiInvoker = new Control();
+            _ = _uiInvoker.Handle;
+
             _overlayWindow = new OverlayWindow();
             _pipeClient = new UIPipeClient();
 
@@ -87,6 +131,12 @@ namespace WindowsRemoteToolsUI
 
         private void OnMessageReceived(object? sender, PipeMessage message)
         {
+            if (_uiInvoker.InvokeRequired)
+            {
+                _uiInvoker.BeginInvoke(new Action(() => OnMessageReceived(sender, message)));
+                return;
+            }
+
             Console.WriteLine($"Received message: {message.Type}");
 
             switch (message.Type)
@@ -213,12 +263,16 @@ namespace WindowsRemoteToolsUI
 
         private void ShowWebOverlay(WebOverlayData data)
         {
-            // Pipe callbacks run on a worker thread; the form has to be created and
-            // accessed on the WinForms UI thread.
             void DoShow()
             {
                 HideWebOverlay();
-                if (string.IsNullOrWhiteSpace(data.Url)) return;
+                if (string.IsNullOrWhiteSpace(data.Url))
+                {
+                    Console.WriteLine("ShowWebOverlay ignored because URL is empty.");
+                    return;
+                }
+
+                Console.WriteLine($"Showing web overlay: {data.Url} (canClose={data.CanClose})");
 
                 var form = new WebOverlayForm(data.Url, data.CanClose);
                 _webOverlay = form;
@@ -228,12 +282,12 @@ namespace WindowsRemoteToolsUI
                         _webOverlay = null;
                 };
                 form.Show();
+                form.BringToFront();
+                form.Activate();
             }
 
-            if (_trayIcon.ContextMenuStrip is { } cms && cms.InvokeRequired)
-                cms.BeginInvoke(new Action(DoShow));
-            else if (Application.OpenForms.Count > 0 && Application.OpenForms[0]!.InvokeRequired)
-                Application.OpenForms[0]!.BeginInvoke(new Action(DoShow));
+            if (_uiInvoker.InvokeRequired)
+                _uiInvoker.BeginInvoke(new Action(DoShow));
             else
                 DoShow();
         }
@@ -263,12 +317,78 @@ namespace WindowsRemoteToolsUI
 
         private void Shutdown()
         {
+            Console.WriteLine("WindowsRemoteToolsUI shutting down.");
             _running = false;
             HideWebOverlay();
             _overlayWindow.Hide();
             _trayIcon.Visible = false;
             _pipeClient.Dispose();
-            Application.Exit();
+            ExitThread();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                HideWebOverlay();
+                _overlayWindow.Hide();
+                _trayIcon.Visible = false;
+                _trayIcon.Dispose();
+                _pipeClient.Dispose();
+                _uiInvoker.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
+    internal static class UIFileLogger
+    {
+        private static readonly object Sync = new();
+        private static readonly string LogDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "WindowsRemoteTools");
+        private static readonly string LogPath = Path.Combine(LogDir, "ui.log");
+
+        public static void Init()
+        {
+            try
+            {
+                Directory.CreateDirectory(LogDir);
+                var writer = TextWriter.Synchronized(new StreamWriter(
+                    new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite),
+                    Encoding.UTF8)
+                { AutoFlush = true });
+                Console.SetOut(new TimestampWriter(writer));
+                Console.SetError(new TimestampWriter(writer));
+                Console.WriteLine($"UI log started. Log file: {LogPath}");
+            }
+            catch
+            {
+            }
+        }
+
+        private sealed class TimestampWriter : TextWriter
+        {
+            private readonly TextWriter _inner;
+            public TimestampWriter(TextWriter inner) => _inner = inner;
+            public override Encoding Encoding => _inner.Encoding;
+
+            public override void WriteLine(string? value)
+            {
+                lock (Sync)
+                {
+                    _inner.WriteLine($"[{DateTime.Now:HH:mm:ss}] {value}");
+                }
+            }
+
+            public override void Write(string? value)
+            {
+                lock (Sync)
+                {
+                    _inner.Write(value);
+                }
+            }
         }
     }
 }

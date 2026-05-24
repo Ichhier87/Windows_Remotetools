@@ -18,7 +18,7 @@ namespace WindowsRemoteTools
         private static extern bool CreateProcessAsUser(
             IntPtr hToken,
             string lpApplicationName,
-            string lpCommandLine,
+            string? lpCommandLine,
             IntPtr lpProcessAttributes,
             IntPtr lpThreadAttributes,
             bool bInheritHandles,
@@ -148,6 +148,14 @@ namespace WindowsRemoteTools
         /// </summary>
         public static Process? StartProcessAsActiveUser(string applicationPath, string workingDirectory)
         {
+            return StartProcessAsActiveUser(applicationPath, workingDirectory, null);
+        }
+
+        /// <summary>
+        /// Starts a process in the active user session with command-line arguments.
+        /// </summary>
+        public static Process? StartProcessAsActiveUser(string applicationPath, string workingDirectory, string? arguments)
+        {
             var sessionId = GetActiveUserSessionId();
             if (sessionId == uint.MaxValue)
             {
@@ -156,7 +164,7 @@ namespace WindowsRemoteTools
             }
 
             Console.WriteLine($"ProcessLauncher: Starting process in session {sessionId}");
-            return StartProcessInSession(applicationPath, workingDirectory, sessionId);
+            return StartProcessInSession(applicationPath, workingDirectory, sessionId, arguments);
         }
 
         /// <summary>
@@ -204,7 +212,7 @@ namespace WindowsRemoteTools
         /// <summary>
         /// Starts a process in a specific session
         /// </summary>
-        private static Process? StartProcessInSession(string applicationPath, string workingDirectory, uint sessionId)
+        private static Process? StartProcessInSession(string applicationPath, string workingDirectory, uint sessionId, string? arguments)
         {
             IntPtr userToken = IntPtr.Zero;
             IntPtr duplicatedToken = IntPtr.Zero;
@@ -249,11 +257,14 @@ namespace WindowsRemoteTools
                 // Create the process
                 var processInfo = new PROCESS_INFORMATION();
                 var creationFlags = CREATE_UNICODE_ENVIRONMENT | NORMAL_PRIORITY_CLASS;
+                var commandLine = string.IsNullOrWhiteSpace(arguments)
+                    ? null
+                    : $"\"{applicationPath}\" {arguments}";
 
                 if (!CreateProcessAsUser(
                     duplicatedToken,
                     applicationPath,
-                    null,
+                    commandLine,
                     IntPtr.Zero,
                     IntPtr.Zero,
                     false,

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -30,6 +31,7 @@ namespace WindowsRemoteTools
         private readonly AudioController _audioController;
         private readonly OverlayWindow? _overlayWindow;
         private readonly ServicePipeServer? _pipeServer;
+        private readonly string? _uiExecutablePath;
         private readonly AudioGroupManager _audioGroupManager;
         private readonly ConcurrentDictionary<string, UploadSession> _uploadSessions = new();
         private bool _displayEventsActive;
@@ -61,10 +63,11 @@ namespace WindowsRemoteTools
         private Task? _connectionTask;
         private bool _running;
         private bool _authenticated;
+        private Process? _fallbackWebOverlayProcess;
 
         public bool IsConnected { get; private set; }
 
-        public WebSocketClient(ConfigManager config, VolumeController volumeController, DisplayController displayController, PictureController pictureController, AudioController audioController, OverlayWindow? overlayWindow = null, ServicePipeServer? pipeServer = null)
+        public WebSocketClient(ConfigManager config, VolumeController volumeController, DisplayController displayController, PictureController pictureController, AudioController audioController, OverlayWindow? overlayWindow = null, ServicePipeServer? pipeServer = null, string? uiExecutablePath = null)
         {
             _config = config;
             _volumeController = volumeController;
@@ -73,6 +76,7 @@ namespace WindowsRemoteTools
             _audioController = audioController;
             _overlayWindow = overlayWindow;
             _pipeServer = pipeServer;
+            _uiExecutablePath = uiExecutablePath;
             _audioGroupManager = new AudioGroupManager(SendMessage);
             if (_pipeServer != null)
                 _pipeServer.MessageReceived += OnPipeMessageReceived;
@@ -92,9 +96,39 @@ namespace WindowsRemoteTools
         {
             _running = false;
             IsConnected = false;
-            _connectionCts?.Cancel();
-            _webSocket?.Dispose();
-            _connectionTask?.Wait(TimeSpan.FromSeconds(2));
+
+            var connectionCts = Interlocked.Exchange(ref _connectionCts, null);
+            var webSocket = Interlocked.Exchange(ref _webSocket, null);
+            var connectionTask = Interlocked.Exchange(ref _connectionTask, null);
+
+            try
+            {
+                connectionCts?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            try
+            {
+                webSocket?.Dispose();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            try
+            {
+                connectionTask?.Wait(TimeSpan.FromSeconds(2));
+            }
+            catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException || e is ObjectDisposedException))
+            {
+            }
+            finally
+            {
+                connectionCts?.Dispose();
+            }
+
             Console.WriteLine("WebSocket client stopped");
         }
 
@@ -1032,23 +1066,25 @@ namespace WindowsRemoteTools
                             return;
                         }
 
-                        await SendOverlayCommand(PipeMessage.MessageTypes.ShowWebOverlay,
+                        var overlaySent = await SendOverlayCommand(PipeMessage.MessageTypes.ShowWebOverlay,
                             new WebOverlayData { Url = url, CanClose = canClose });
 
                         await SendMessage(new JObject
                         {
                             ["UUID"] = uuid,
-                            ["success"] = true
+                            ["success"] = overlaySent,
+                            ["error"] = overlaySent ? null : "UI pipe is not connected"
                         });
                         break;
                     }
 
                 case "close":
-                    await SendOverlayCommand(PipeMessage.MessageTypes.HideWebOverlay);
+                    var closeSent = await SendOverlayCommand(PipeMessage.MessageTypes.HideWebOverlay);
                     await SendMessage(new JObject
                     {
                         ["UUID"] = uuid,
-                        ["success"] = true
+                        ["success"] = closeSent,
+                        ["error"] = closeSent ? null : "UI pipe is not connected"
                     });
                     break;
 
@@ -1585,17 +1621,79 @@ namespace WindowsRemoteTools
             }
         }
 
-        private async Task SendOverlayCommand(string messageType, object? data = null)
+        private async Task<bool> SendOverlayCommand(string messageType, object? data = null)
         {
             if (_overlayWindow != null)
             {
                 // Direct mode: use overlay window directly
                 ExecuteOverlayCommandDirect(messageType, data);
+                return true;
             }
             else if (_pipeServer != null)
             {
                 // Service mode: send via pipe to UI process
-                await _pipeServer.SendMessageAsync(PipeMessage.Create(messageType, data));
+                Console.WriteLine($"Sending overlay command to UI via pipe: {messageType}, connected={_pipeServer.IsConnected}");
+                var sent = await _pipeServer.SendMessageAsync(PipeMessage.Create(messageType, data));
+                Console.WriteLine($"Overlay command pipe send result: {sent}");
+                if (sent)
+                    return true;
+
+                return LaunchOverlayFallback(messageType, data);
+            }
+
+            Console.WriteLine($"Overlay command skipped because no overlay target exists: {messageType}");
+            return false;
+        }
+
+        private bool LaunchOverlayFallback(string messageType, object? data)
+        {
+            if (string.IsNullOrWhiteSpace(_uiExecutablePath) || !File.Exists(_uiExecutablePath))
+            {
+                Console.WriteLine($"Overlay fallback unavailable: UI executable not found at '{_uiExecutablePath}'");
+                return false;
+            }
+
+            try
+            {
+                if (messageType == PipeMessage.MessageTypes.HideWebOverlay)
+                {
+                    if (_fallbackWebOverlayProcess is { HasExited: false })
+                    {
+                        _fallbackWebOverlayProcess.Kill();
+                        Console.WriteLine("Overlay fallback web overlay process killed.");
+                    }
+                    _fallbackWebOverlayProcess = null;
+                    return true;
+                }
+
+                if (messageType != PipeMessage.MessageTypes.ShowWebOverlay || data is not WebOverlayData webData)
+                {
+                    Console.WriteLine($"Overlay fallback does not support command type: {messageType}");
+                    return false;
+                }
+
+                if (_fallbackWebOverlayProcess is { HasExited: false })
+                {
+                    _fallbackWebOverlayProcess.Kill();
+                    _fallbackWebOverlayProcess = null;
+                }
+
+                var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(webData)));
+                var workingDirectory = Path.GetDirectoryName(_uiExecutablePath) ?? AppContext.BaseDirectory;
+                Console.WriteLine($"Launching UI overlay fallback process for URL: {webData.Url}");
+                _fallbackWebOverlayProcess = ProcessLauncher.StartProcessAsActiveUser(
+                    _uiExecutablePath,
+                    workingDirectory,
+                    $"--show-web-overlay \"{payload}\"");
+
+                var launched = _fallbackWebOverlayProcess != null;
+                Console.WriteLine($"Overlay fallback launch result: {launched}");
+                return launched;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Overlay fallback launch failed: {ex}");
+                return false;
             }
         }
 
@@ -2005,8 +2103,6 @@ namespace WindowsRemoteTools
                 if (_batteryEventsActive)
                     SystemEvents.PowerModeChanged -= OnPowerModeChangedForBattery;
             }
-            _connectionCts?.Dispose();
-            _webSocket?.Dispose();
         }
     }
 }

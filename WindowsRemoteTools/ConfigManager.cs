@@ -13,6 +13,7 @@ namespace WindowsRemoteTools
     public class ConfigManager
     {
         private const string ConfigFileName = "config.json";
+        private static readonly string ConfigPath = Path.Combine(AppContext.BaseDirectory, ConfigFileName);
 
         // WebSocket connection settings
         public string WsHost { get; set; } = "localhost";
@@ -62,9 +63,11 @@ namespace WindowsRemoteTools
         {
             try
             {
-                if (File.Exists(ConfigFileName))
+                var path = ResolveConfigPath();
+                if (path != null)
                 {
-                    var json = File.ReadAllText(ConfigFileName);
+                    Console.WriteLine($"Loading config from: {path}");
+                    var json = File.ReadAllText(path);
                     var config = JsonConvert.DeserializeObject<ConfigManager>(json);
                     return config ?? new ConfigManager();
                 }
@@ -81,13 +84,31 @@ namespace WindowsRemoteTools
         {
             try
             {
+                Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath) ?? AppContext.BaseDirectory);
                 var json = JsonConvert.SerializeObject(this, Formatting.Indented);
-                File.WriteAllText(ConfigFileName, json);
+                File.WriteAllText(ConfigPath, json);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error saving config: {ex.Message}");
             }
+        }
+
+        private static string? ResolveConfigPath()
+        {
+            if (File.Exists(ConfigPath))
+            {
+                return ConfigPath;
+            }
+
+            var currentDirectoryPath = Path.GetFullPath(ConfigFileName);
+            if (!string.Equals(currentDirectoryPath, ConfigPath, StringComparison.OrdinalIgnoreCase)
+                && File.Exists(currentDirectoryPath))
+            {
+                return currentDirectoryPath;
+            }
+
+            return null;
         }
 
         private static string GetLocalIPAddress()

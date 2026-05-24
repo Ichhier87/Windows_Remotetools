@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 
 namespace WindowsRemoteTools
 {
@@ -42,7 +43,8 @@ namespace WindowsRemoteTools
             {
                 // Service mode: use pipe server to communicate with UI process
                 _pipeServer = new ServicePipeServer();
-                _webSocketClient = new WebSocketClient(_config, _volumeController, _displayController, _pictureController, _audioController, null, _pipeServer);
+                var uiExecutablePath = Path.Combine(AppContext.BaseDirectory, "WindowsRemoteToolsUI.exe");
+                _webSocketClient = new WebSocketClient(_config, _volumeController, _displayController, _pictureController, _audioController, null, _pipeServer, uiExecutablePath);
             }
 
             _updateChecker = new UpdateChecker(_config);

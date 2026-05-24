@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.IO.Pipes;
+using System.Linq;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
@@ -21,15 +22,28 @@ namespace WindowsRemoteTools
         private CancellationTokenSource? _cancellationTokenSource;
         private Task? _listenTask;
         private bool _isConnected;
+        private readonly object _sync = new object();
 
         public event EventHandler<PipeMessage>? MessageReceived;
         public event EventHandler? ClientConnected;
         public event EventHandler? ClientDisconnected;
 
-        public bool IsConnected => _isConnected;
+        public bool IsConnected
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _isConnected && _writer != null;
+                }
+            }
+        }
 
         public void Start()
         {
+            if (_listenTask != null && !_listenTask.IsCompleted)
+                return;
+
             _cancellationTokenSource = new CancellationTokenSource();
             _listenTask = Task.Run(() => ListenLoop(_cancellationTokenSource.Token));
         }
@@ -67,12 +81,16 @@ namespace WindowsRemoteTools
                     // Wait for client connection
                     await _pipeServer.WaitForConnectionAsync(cancellationToken);
 
-                    _isConnected = true;
-                    Console.WriteLine("ServicePipeServer: Client connected!");
-                    ClientConnected?.Invoke(this, EventArgs.Empty);
-
                     _reader = new StreamReader(_pipeServer, Encoding.UTF8);
                     _writer = new StreamWriter(_pipeServer, Encoding.UTF8) { AutoFlush = true };
+
+                    lock (_sync)
+                    {
+                        _isConnected = true;
+                    }
+
+                    Console.WriteLine("ServicePipeServer: Client connected!");
+                    ClientConnected?.Invoke(this, EventArgs.Empty);
 
                     // Read messages from client
                     while (_isConnected && !cancellationToken.IsCancellationRequested)
@@ -109,7 +127,10 @@ namespace WindowsRemoteTools
                 }
                 finally
                 {
-                    _isConnected = false;
+                    lock (_sync)
+                    {
+                        _isConnected = false;
+                    }
                     ClientDisconnected?.Invoke(this, EventArgs.Empty);
 
                     _reader?.Dispose();
@@ -131,17 +152,30 @@ namespace WindowsRemoteTools
 
         public async Task<bool> SendMessageAsync(PipeMessage message)
         {
-            if (!_isConnected || _writer == null)
+            StreamWriter? writer;
+            bool isConnected;
+
+            lock (_sync)
+            {
+                writer = _writer;
+                isConnected = _isConnected;
+            }
+
+            if (!isConnected || writer == null)
+            {
+                Console.WriteLine($"ServicePipeServer SendMessage skipped: connected={isConnected}, writerReady={writer != null}, type={message.Type}");
                 return false;
+            }
 
             try
             {
-                await _writer.WriteLineAsync(message.ToJson());
+                await writer.WriteLineAsync(message.ToJson());
+                Console.WriteLine($"ServicePipeServer sent message: {message.Type}");
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"ServicePipeServer SendMessage error: {ex.Message}");
+                Console.WriteLine($"ServicePipeServer SendMessage error: {ex}");
                 return false;
             }
         }
@@ -149,12 +183,27 @@ namespace WindowsRemoteTools
         public void Dispose()
         {
             _cancellationTokenSource?.Cancel();
-            _listenTask?.Wait(TimeSpan.FromSeconds(2));
+            try
+            {
+                _listenTask?.Wait(TimeSpan.FromSeconds(2));
+            }
+            catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
+            {
+            }
 
-            _reader?.Dispose();
-            _writer?.Dispose();
-            _pipeServer?.Dispose();
-            _cancellationTokenSource?.Dispose();
+            lock (_sync)
+            {
+                _isConnected = false;
+                _reader?.Dispose();
+                _writer?.Dispose();
+                _pipeServer?.Dispose();
+                _cancellationTokenSource?.Dispose();
+                _reader = null;
+                _writer = null;
+                _pipeServer = null;
+                _cancellationTokenSource = null;
+                _listenTask = null;
+            }
         }
     }
 }
